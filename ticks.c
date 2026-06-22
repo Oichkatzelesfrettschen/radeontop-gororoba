@@ -65,6 +65,7 @@ static void *collector(void *arg) {
 		if (stat & bits.cp) history[cur].cp = 1;
 		if (stat & bits.e2) history[cur].e2 = 1;
 		if (stat & bits.rb2d) history[cur].rb2d = 1;
+		if (stat & bits.cf) history[cur].cf = 1;
 		if (uvd & bits.uvd) history[cur].uvd = 1;
 		if (vce & bits.vce0) history[cur].vce0 = 1;
 		getsclk(&history[cur].sclk);
@@ -98,6 +99,7 @@ static void *collector(void *arg) {
 				res[curres].cp += history[i].cp;
 				res[curres].e2 += history[i].e2;
 				res[curres].rb2d += history[i].rb2d;
+				res[curres].cf += history[i].cf;
 				res[curres].uvd += history[i].uvd;
 				res[curres].vce0 += history[i].vce0;
 				res[curres].mclk += history[i].mclk;

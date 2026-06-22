@@ -156,6 +156,7 @@ void present(const unsigned int ticks, const char card[], unsigned int color,
 		float cp = 100 * results->cp * k;
 		float e2 = 100 * results->e2 * k;
 		float rb2d = 100 * results->rb2d * k;
+		float cf = 100 * results->cf * k;
 		float vram = 100.0f * results->vram / vramsize;
 		float vrammb = results->vram / 1024.0f / 1024.0f;
 		float vramsizemb = vramsize / 1024.0f / 1024.0f;
@@ -277,6 +278,10 @@ void present(const unsigned int ticks, const char card[], unsigned int color,
 		if (bits.rb2d) {
 			percentage(start, w, rb2d);
 			printright(start++, hw, _("2D Backend %6.2f%%"), rb2d);
+		}
+		if (bits.cf) {
+			percentage(start, w, cf);
+			printright(start++, hw, _("Cmd Fetch %6.2f%%"), cf);
 		}
 		if (bits.uvd) {
 			percentage(start, w, uvd);
