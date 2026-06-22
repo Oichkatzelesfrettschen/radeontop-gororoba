@@ -440,7 +440,7 @@ int getfamily(unsigned int id) {
 
 void initbits(int fam) {
 
-	bits.cp = bits.e2 = bits.rb2d = 0;
+	bits.cp = bits.e2 = bits.rb2d = bits.cf = 0;
 
 	if (fam == RS480) {
 		// R300-class RBBM_STATUS (0x0E40) engine-busy layout, shared by
@@ -458,15 +458,17 @@ void initbits(int fam) {
 		bits.cp  = (1U << 16);  // CP_CMDSTRM_BUSY -- PM4 command stream executing
 		bits.e2  = (1U << 17);  // E2_BUSY -- the 2D draw engine
 		bits.rb2d = (1U << 18) | (1U << 27);  // RB2D|CBA2D -- 2D render backend
-		// The kernel decode also names RE_BUSY (21), TAM|TDM|TIM
-		// (22|23|25), and RB3D_BUSY (19), but on RS482 silicon those bits
-		// never assert -- a raw RBBM_STATUS histogram during a sustained
-		// 126-FPS textured 800x600 fill shows the busy word saturating at
-		// GUI|GA|CP_CMDSTRM|ENG_EV|CF_PIPE with the rasterizer, texture,
-		// and render-backend bits permanently clear.  Perpetual-zero
-		// gauges mislead, so those lanes stay masked off; the per-block
-		// cache status registers in the 0x4xxx window are the readable
-		// alternative and belong to the gated lane, not a poller.
+		bits.cf  = (1U << 14);  // CF_PIPE_BUSY -- the command/clause fetch pipe
+		// A raw RBBM_STATUS histogram under a sustained load shows the busy
+		// word saturating at GUI|GA|CP_CMDSTRM|ENG_EV|CF_PIPE -- each of
+		// those now has its own lane (gpu|pa|cp|ee|cf).  The kernel decode
+		// also names RE_BUSY (21), TAM|TDM|TIM (22|23|25), and RB3D_BUSY
+		// (19), but on RS482 silicon those bits never assert (the
+		// rasterizer, texture, and render-backend bits stay permanently
+		// clear in that histogram).  Perpetual-zero gauges mislead, so
+		// those lanes stay masked off; the per-block cache status registers
+		// in the 0x4xxx window are the readable alternative and belong to
+		// the gated lane, not a poller.
 		bits.sc = bits.ta = bits.cb = bits.db = 0;
 		bits.tc = bits.sx = bits.sh = bits.spi = bits.smx = bits.cr = 0;
 		bits.uvd = 0;   // RS482 has no UVD -- the 3D pipe is the only decoder

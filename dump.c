@@ -111,6 +111,7 @@ void dumpdata(const unsigned int ticks, const char file[], const unsigned int li
 		float cp = 100 * results->cp * k;
 		float e2 = 100 * results->e2 * k;
 		float rb2d = 100 * results->rb2d * k;
+		float cf = 100 * results->cf * k;
 		float vram = 100.0f * results->vram / vramsize;
 		float vrammb = results->vram / 1024.0f / 1024.0f;
 		float gtt = 100.0f * results->gtt / gttsize;
@@ -160,6 +161,8 @@ void dumpdata(const unsigned int ticks, const char file[], const unsigned int li
 			fprintf(f, ", e2 %.2f%%", e2);
 		if (bits.rb2d)
 			fprintf(f, ", rb2d %.2f%%", rb2d);
+		if (bits.cf)
+			fprintf(f, ", cf %.2f%%", cf);
 		if (bits.uvd)
 			fprintf(f, ", uvd %.2f%%", uvd);
 		if (bits.vce0)

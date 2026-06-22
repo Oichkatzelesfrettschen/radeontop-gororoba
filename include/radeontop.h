@@ -164,11 +164,13 @@ struct bits_t {
 	unsigned int cb;
 	unsigned int cr;
 	// R300-class RBBM_STATUS lanes (r300d.h R_000E40): the PM4 command
-	// stream, the 2D draw engine, and the 2D render backend have their own
-	// busy bits on these parts; zero masks on every other family.
+	// stream, the 2D draw engine, the 2D render backend, and the command-
+	// fetch pipe have their own busy bits on these parts; zero masks on
+	// every other family.
 	unsigned int cp;
 	unsigned int e2;
 	unsigned int rb2d;
+	unsigned int cf;
 	unsigned int uvd;
 	unsigned int vce0;
 	uint64_t vram;
