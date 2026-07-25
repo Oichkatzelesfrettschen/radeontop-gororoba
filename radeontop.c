@@ -20,7 +20,7 @@
 #include <errno.h>
 #include <limits.h>
 
-void die(const char * const why) {
+__attribute__((noreturn)) void die(const char * const why) {
 	fprintf(stderr, "%s\n", why);
 	exit(1);
 }

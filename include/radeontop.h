@@ -51,7 +51,13 @@ enum {
 void authenticate_drm(int fd);
 
 // radeontop.c
-void die(const char *why);
+// die exits, so the noreturn attribute tells the compiler and the analyzers
+// that control stops there.  Without it every `if (!p) die(...)` guard reads as
+// a path that falls through to the dereference below, and cppcheck reports the
+// guarded allocation in collect() as nullPointerOutOfMemory.  cppcheck 2.21.1
+// honors the GNU attribute spelling and not the C11 _Noreturn keyword on a
+// prototype, and the build already requires GNU C through -std=gnu11.
+__attribute__((noreturn)) void die(const char *why);
 
 // detect.c
 void init_pci(const char *path, short *bus, unsigned int *device_id, const unsigned char forcemem);
