@@ -382,6 +382,12 @@ description. One commit per logical change; each commit stays buildable,
 reviewable, and bisectable. Formatting churn and logic changes ride separate
 commits.
 
+An appended `(#NNN)` on the subject moves to a trailer that carries the PR
+link. A squash-merge button that appends `(#NNN)` to the merged subject is a
+forge artifact rather than an author artifact, so it refutes no commit and
+justifies no history rewrite; passing an explicit merge subject keeps the
+suffix off the subject line.
+
 ### Markdown
 
 Markdown loaded by agents uses exactly one H1, heading depth no deeper than
