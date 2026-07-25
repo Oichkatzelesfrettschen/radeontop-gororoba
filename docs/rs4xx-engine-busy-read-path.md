@@ -44,12 +44,18 @@ modern kernel. The `resourceN` file is the BAR aperture itself, so its file
 offset is BAR-relative and carries no base-address term, and `MAP_SHARED` makes
 reads reach the device.
 
-The aperture size is measured, not assumed. A retained same-boot `resource2`
-crosswalk on RS482 reads `CONFIG_REG_APER_SIZE` (`0x0110`) as `0x00008000`, so
-the register aperture is 32 KiB. The R600+ GRBM window begins at exactly
-`0x8000`, which is the first offset past the end of that aperture. The family
-branch in `open_pci` is therefore load-bearing rather than defensive: mapping the
-GRBM window on this part addresses memory the device does not decode.
+The aperture size is measured. On the RS482 target sysfs reports BAR2 as
+`0xc0100000-0xc010ffff`, so the register BAR is 64 KiB and the R600+ GRBM window
+at `0x8000` lies inside it.
+
+An earlier revision of this document read `CONFIG_REG_APER_SIZE` (`0x0110`) as
+`0x00008000` and concluded the register aperture is 32 KiB with the GRBM window
+past its end. The direct BAR measurement falsifies that: `0x0110` reports a
+different aperture, and it is not the MMIO register BAR size. The family branch
+in `open_pci` therefore rests on capability rather than addressability -- GRBM is
+an R600 construct that R300-class parts do not implement -- and the size check
+added alongside it is an independent guard for a BAR too small to decode the
+window it is about to map.
 
 `RBBM_STATUS` at `0x0E40` sits inside the window mapped at offset 0 for the SRBM
 registers (`SRBM_MMAP_SIZE = 0xE54`), so `getgrbm_pci_r300` reads it from
@@ -360,6 +366,38 @@ discussed above and are not tighter than the IID reference.
 
 `ta`, `sc`, `cb`, and `db` stayed at zero across every sample of three runs
 (idle, a 136-case deqp texture-filtering run, and the sustained fill).
+
+### On-target run, merged tree
+
+Measured on `cachyos-vostro1000`, RS482 PCI `1002:5974`, kernel 7.1.3-2-cachyos,
+binary built at the merged commit from this repository, sampling at 120 Hz
+through `radeontop -m`. The boot identifier is unchanged across the run.
+
+| Load | gpu | pa | cf | ee | cp | vgt | e2 | rb2d |
+|---|---|---|---|---|---|---|---|---|
+| Idle, 3 samples | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `glxgears`, vsync-locked 59.4 FPS, 5 samples | 30.00-44.17 | 30.00-44.17 | 30.00-44.17 | 24.17-41.67 | 7.50-10.83 | 2.50-6.67 | 0 | 0 |
+
+`gpu`, `pa`, and `cf` carry bit-identical values in every sample of the run, so
+`GUI_ACTIVE`, `GA_BUSY`, and `CF_PIPE_BUSY` assert together under this load
+rather than tracking separable work. Distinguishing them needs a load that
+drives geometry setup and command fetch at different rates.
+
+`e2` and `rb2d` stay at zero here as well, which adds a third workload to the
+2D-lane non-observation without discriminating among its three explanations.
+
+### The same run demonstrates the low-N sampling limit
+
+Six single-shot `radeontool regmatch 0xe40` reads taken during that load all
+returned `0x00000140`, the idle word, with every busy bit clear -- while the
+120 Hz sampler concurrently measured `gpu` at 36.67 percent. At `p = 0.3667` the
+probability of six consecutive misses is `(1 - p)^6 = 0.064`, so the outcome is
+unremarkable rather than contradictory.
+
+The two instruments disagree because one takes 120 samples per report and the
+other takes six across the whole window. A handful of instantaneous register
+reads is not evidence of an idle block, and a non-observation constrains a duty
+cycle only through its sample count.
 
 ## GART and MC observation
 

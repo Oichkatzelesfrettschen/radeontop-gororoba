@@ -188,11 +188,12 @@ static void open_pci(struct pci_device *gpu_device) {
 		// GART/MC observations once before dropping privileges.
 		init_rs480_gart_observed();
 	} else {
-		// A same-boot resource2 crosswalk on RS482 reads CONFIG_REG_APER_SIZE
-		// (0x0110) as 0x00008000, so the GRBM window begins at the first offset
-		// past that aperture.  The family branch keeps this map off R300-class
-		// parts, and the size check keeps it off any other BAR too small to
-		// decode it.
+		// GRBM is an R600 construct, so the family branch above keeps this map
+		// off R300-class parts on capability grounds.  The size check is the
+		// separate guard: a BAR too small to decode 0x8000 maps out of range.
+		// RS482 sysfs reports BAR2 as 0xc0100000-0xc010ffff, 64 KiB, so this
+		// window would fit there; the family branch, not the size, is what
+		// keeps it away.
 		if (barsize < 0x8000 + MMAP_SIZE)
 			die(_("Register BAR is smaller than the GRBM window"));
 
