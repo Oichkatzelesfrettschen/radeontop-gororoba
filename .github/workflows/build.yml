@@ -1,0 +1,151 @@
+# Binds the build-option matrix, the static analysis, and the command-line
+# contracts to each commit, so a regression is caught at the revision that
+# introduced it rather than at the next local build.  Every job runs plain=1:
+# stripping is a packaging decision, and a stripped binary hides the symbols the
+# analyzers name.  No job touches a device path; hardware validation runs on the
+# RS482 target and is recorded in the pull request.
+
+name: build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    name: ${{ matrix.lane }} / ${{ matrix.cc }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
+        lane:
+          - minimal
+          - radeon
+          - full
+        include:
+          - lane: minimal
+            options: nls=0 xcb=0 amdgpu=0
+          - lane: radeon
+            options: nls=1 xcb=1 amdgpu=0
+          - lane: full
+            options: nls=1 xcb=1 amdgpu=1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            pkgconf gettext libpciaccess-dev libdrm-dev \
+            libncurses-dev libxcb1-dev libxcb-dri2-0-dev
+
+      # CFLAGS travels in the environment, not on the make command line: the
+      # Makefile takes it with ?= and then appends -Iinclude and the pkg-config
+      # flags with +=, and a command-line assignment overrides both.  makepkg
+      # exports CFLAGS the same way, so this exercises the packaging path.
+      # A warning is a defect until explained, so the build fails on one.
+      - name: Build
+        env:
+          CC: ${{ matrix.cc }}
+          # _FORTIFY_SOURCE is what gives the setuid family and vasprintf their
+          # warn_unused_result attribute.  Some distributions enable it by
+          # default and others do not, so the gate states it rather than
+          # inheriting whichever the runner image happens to apply.
+          CFLAGS: -O2 -Werror -D_FORTIFY_SOURCE=3
+        run: make ${{ matrix.options }} plain=1
+
+      - name: Confirm the stamped version reaches the binary
+        run: |
+          make clean
+          make ${{ matrix.options }} plain=1 VERSION=0.0.rci.gffffffffffff
+          test "$(./radeontop --version)" = "RadeonTop 0.0.rci.gffffffffffff"
+
+  analyze:
+    name: static analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install analysis dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            pkgconf gettext libpciaccess-dev libdrm-dev \
+            libncurses-dev libxcb1-dev libxcb-dri2-0-dev \
+            clang cppcheck shellcheck
+
+      # -Wconditional-uninitialized reports a read that is defined on some paths
+      # only.  It found the ticks.c uvd and vce reads that gcc at -Os did not.
+      - name: clang uninitialized-read analysis
+        env:
+          CC: clang
+          CFLAGS: >-
+            -O2 -Wall -Wextra -Werror -D_FORTIFY_SOURCE=3
+            -Wsometimes-uninitialized -Wconditional-uninitialized
+        run: make plain=1
+
+      - name: cppcheck
+        run: |
+          cppcheck --std=c11 --error-exitcode=2 --inline-suppr \
+            --enable=warning,portability \
+            --suppress=missingIncludeSystem \
+            -Iinclude ./*.c
+
+      - name: shellcheck
+        run: shellcheck ./*.sh
+
+      # Both family-enum tables must name every chipset the PCI ID headers
+      # declare, and familycheck.sh exits nonzero when one does not.
+      - name: family enum tables
+        run: ./familycheck.sh
+
+  cli:
+    name: command-line contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            pkgconf gettext libpciaccess-dev libdrm-dev \
+            libncurses-dev libxcb1-dev libxcb-dri2-0-dev
+
+      - name: Build
+        run: make plain=1 VERSION=0.0.rci.gffffffffffff
+
+      # Each case exercises an option boundary that a runner reaches without a
+      # GPU, because option parsing precedes every device access.
+      - name: Exit-status and stream contracts
+        run: |
+          set -eu
+          fail() { echo "FAIL: $*" >&2; exit 1; }
+
+          # A successful informational request exits 0 on stdout.
+          for opt in --version -v --help -h; do
+            ./radeontop "$opt" > /tmp/out 2> /tmp/err || fail "$opt exited nonzero"
+            test -s /tmp/out || fail "$opt wrote nothing to stdout"
+            test ! -s /tmp/err || fail "$opt wrote to stderr"
+          done
+
+          # An unknown option exits nonzero with its diagnostic on stderr.
+          if ./radeontop --no-such-option > /tmp/out 2> /tmp/err; then
+            fail "unknown option exited 0"
+          fi
+          test ! -s /tmp/out || fail "unknown option wrote to stdout"
+          grep -q 'no-such-option' /tmp/err || fail "unknown option unnamed"
+
+          # A rejected argument exits nonzero and names the accepted range.
+          for arg in "-t 0" "-t -1" "-t abc" "-i 0" "-b zz" "-b 100" "-b -1"; do
+            # shellcheck disable=SC2086
+            if ./radeontop $arg -l 1 -d - > /tmp/out 2> /tmp/err; then
+              fail "'$arg' was accepted"
+            fi
+            grep -q 'Invalid' /tmp/err || fail "'$arg' gave no range diagnostic"
+          done

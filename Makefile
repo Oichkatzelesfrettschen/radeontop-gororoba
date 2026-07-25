@@ -18,15 +18,28 @@ MANDIR ?= share/man
 nls ?= 1
 xcb ?= 1
 
+# VERSION stamps include/version.h and identifies the compiled sources.  A
+# packaging recipe passes the revision it pinned; an empty value leaves
+# getver.sh to query the surrounding checkout for a developer build.
+VERSION ?=
+
 bin = radeontop
 xcblib = libradeontop_xcb.so
-src = $(filter-out amdgpu.c auth_xcb.c,$(wildcard *.c))
+# Enumerate the production translation units.  A wildcard absorbs any stray .c
+# file left in the root, so the build surface follows the directory contents
+# rather than the recipe.  amdgpu.c joins below under its own option, and
+# auth_xcb.c builds into the separate xcb shim.
+src = auth.c detect.c dump.c family_str.c radeon.c radeontop.c ticks.c ui.c
 verh = include/version.h
 
 CFLAGS_SECTIONED = -ffunction-sections -fdata-sections
 LDFLAGS_SECTIONED = -Wl,-gc-sections
 
 CFLAGS ?= -Os
+# The sources use _GNU_SOURCE interfaces on a C11 base, so the language mode is
+# part of the recipe rather than a property of whichever compiler default
+# applies.
+CFLAGS += -std=gnu11
 CFLAGS += -Wall -Wextra -pthread
 CFLAGS += -Iinclude
 CFLAGS += $(CFLAGS_SECTIONED)
@@ -88,7 +101,7 @@ LIBS += $(shell pkg-config --libs ncursesw 2>/dev/null || \
 		shell pkg-config --libs ncurses 2>/dev/null || \
 		echo "-lncurses")
 
-.PHONY: all clean install man dist
+.PHONY: all clean install man dist FORCE
 
 all: $(bin)
 
@@ -96,21 +109,25 @@ ifeq ($(xcb), 1)
 all: $(xcblib)
 
 $(xcblib): auth_xcb.c $(wildcard include/*.h) $(verh)
-	$(CC) -shared -fPIC -Wl,-soname,$@ -o $@ $< $(CFLAGS) $(LDFLAGS) $(xcb_LIBS)
+	$(CC) -shared -fPIC -Wl,-soname,$@ -o $@ $< $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $(xcb_LIBS)
 endif
 
 $(obj): $(wildcard include/*.h) $(verh)
 
 $(bin): $(obj)
-	$(CC) -o $(bin) $(obj) $(CFLAGS) $(LDFLAGS) $(LIBS)
+	$(CC) -o $(bin) $(obj) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $(LIBS)
 
 clean:
 	rm -f *.o $(bin) $(xcblib)
 
-.git:
+# FORCE runs getver.sh on every build so a changed VERSION reaches the header;
+# getver.sh replaces the header on a changed value only, so the objects that
+# include it rebuild on a version change and stay built otherwise.  A .git
+# prerequisite instead ties the stamp to a checkout the package build lacks.
+$(verh): FORCE
+	./getver.sh '$(VERSION)'
 
-$(verh): .git
-	./getver.sh
+FORCE:
 
 trans:
 	xgettext -o translations/radeontop.pot -k_ *.c \

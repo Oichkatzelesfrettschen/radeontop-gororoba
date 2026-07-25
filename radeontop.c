@@ -20,40 +20,52 @@
 #include <errno.h>
 #include <limits.h>
 
-void die(const char * const why) {
+__attribute__((noreturn)) void die(const char * const why) {
 	fprintf(stderr, "%s\n", why);
 	exit(1);
 }
 
-// atoi reports no error: a non-numeric argument becomes 0 and a negative one
-// wraps through the unsigned option variables, so -t 0 reaches a modulo by zero
-// in the collector and -t -1 reaches a 4-billion-sample window.  Accept a whole
-// decimal argument inside [lo, hi] and reject everything else.
+// atoi and a bare strtoul report no error: a non-numeric argument becomes 0 and
+// a negative one wraps through the unsigned option variables, so -t 0 reaches a
+// modulo by zero in the collector, -t -1 reaches a 4-billion-sample window, and
+// -b xyz selects bus 0 instead of naming the typo.  Accept a whole argument in
+// the given base inside [lo, hi] and reject everything else.
 static unsigned int parse_count(const char * const arg, const char * const what,
-				unsigned long lo, unsigned long hi) {
+				unsigned long lo, unsigned long hi, int base) {
 	char *end = NULL;
 	unsigned long value;
 
 	errno = 0;
-	value = strtoul(arg, &end, 10);
+	value = strtoul(arg, &end, base);
 
 	if (errno || !end || end == arg || *end || strchr(arg, '-') ||
 		value < lo || value > hi) {
-		fprintf(stderr, _("Invalid %s '%s': expected %lu to %lu\n"),
-			what, arg, lo, hi);
+		if (base == 16)
+			fprintf(stderr, _("Invalid %s '%s': expected hexadecimal %lx to %lx\n"),
+				what, arg, lo, hi);
+		else
+			fprintf(stderr, _("Invalid %s '%s': expected %lu to %lu\n"),
+				what, arg, lo, hi);
 		exit(1);
 	}
 
 	return (unsigned int) value;
 }
 
-static void version() {
+static void version(void) {
 	printf("RadeonTop %s\n", VERSION);
-	exit(1);
+	exit(0);
 }
 
-static void help(const char * const me, const unsigned int ticks, const unsigned int dumpinterval) {
-	printf(_("\n\tRadeonTop for R600 and above, plus R300-class IGPs (RS4xx, use -m).\n\n"
+// A successful informational request exits 0 on stdout and a rejected option
+// exits nonzero on stderr, so a caller distinguishes the two by status and a
+// pipeline keeps the diagnostic out of the data stream.  Upstream radeontop
+// routes both through die() and exits 1 either way.
+static void help(const char * const me, const unsigned int ticks,
+		const unsigned int dumpinterval, const int status) {
+	FILE * const out = status ? stderr : stdout;
+
+	fprintf(out, _("\n\tRadeonTop for R600 and above, plus R300-class IGPs (RS4xx, use -m).\n\n"
 		"\tUsage: %s [-chmv] [-b bus] [-d file] [-i seconds] [-l limit] [-p device] [-t ticks]\n\n"
 		"-b --bus 3		Pick card from this PCI bus (hexadecimal)\n"
 		"-c --color		Enable colors\n"
@@ -68,12 +80,25 @@ static void help(const char * const me, const unsigned int ticks, const unsigned
 		"-h --help		Show this help\n"
 		"-v --version		Show the version\n"),
 		me, dumpinterval, ticks);
-	die("");
+	exit(status);
+}
+
+// The binary runs setuid root on installations that need MMIO register access,
+// so a privilege transition that silently fails leaves the wrong credentials in
+// force for everything after it.  glibc marks the setuid family
+// warn_unused_result under _FORTIFY_SOURCE, and each call site here checks both
+// the return value and the resulting effective id, because the id is the
+// property that matters.
+static void drop_euid(void) {
+	const uid_t uid = getuid();
+
+	if (seteuid(uid) || geteuid() != uid)
+		die(_("Failed to drop effective privileges"));
 }
 
 int main(int argc, char **argv) {
 	// Temporarily drop privileges to do option parsing, etc.
-	seteuid(getuid());
+	drop_euid();
 
 	const unsigned int default_ticks = 120;
 	const unsigned int default_dumpinterval = 1;
@@ -118,11 +143,15 @@ int main(int argc, char **argv) {
 
 		switch(c) {
 			case 'h':
+				help(argv[0], default_ticks, default_dumpinterval, 0);
+			break;
 			case '?':
-				help(argv[0], default_ticks, default_dumpinterval);
+				// getopt_long has already named the offending option
+				// on stderr; the usage text follows it there.
+				help(argv[0], default_ticks, default_dumpinterval, 1);
 			break;
 			case 't':
-				ticks = parse_count(optarg, _("tick count"), 1, 1000000);
+				ticks = parse_count(optarg, _("tick count"), 1, 1000000, 10);
 			break;
 			case 'T':
 				transparency = 1;
@@ -134,19 +163,21 @@ int main(int argc, char **argv) {
 				forcemem = 1;
 			break;
 			case 'b':
-				bus = strtoul(optarg, NULL, 16);
+				// A PCI bus number spans one byte, and bus stays at
+				// its -1 unset sentinel when the option is absent.
+				bus = (short) parse_count(optarg, _("bus number"), 0, 0xff, 16);
 			break;
 			case 'v':
 				version();
 			break;
 			case 'l':
-				limit = parse_count(optarg, _("dump limit"), 0, UINT_MAX);
+				limit = parse_count(optarg, _("dump limit"), 0, UINT_MAX, 10);
 			break;
 			case 'd':
 				dump = optarg;
 			break;
 			case 'i':
-				dumpinterval = parse_count(optarg, _("dump interval"), 1, 86400);
+				dumpinterval = parse_count(optarg, _("dump interval"), 1, 86400, 10);
 			break;
 			case 'p':
 				path = optarg;
@@ -155,11 +186,20 @@ int main(int argc, char **argv) {
 	}
 
 	// init (regain privileges for bus initialization and ultimately drop them afterwards)
-	seteuid(0);
+	// An unprivileged run cannot regain root and reports EPERM, and the DRM
+	// and xcb paths still work without it, so init_pci reports whichever
+	// access it cannot obtain.  Any other failure is unexpected.
+	if (seteuid(0) && errno != EPERM)
+		die(_("Failed to regain privileges"));
+
 	init_pci(path, &bus, &device_id, forcemem);
 	// after init_pci we can assume that bus/device_id exists (otherwise it would die())
 
-	setuid(getuid());
+	// Drop permanently before the collector, the UI, and the dump writer run.
+	// setuid moves the saved id too, so a failure here would leave every one
+	// of them able to return to root.
+	if (setuid(getuid()) || geteuid() != getuid())
+		die(_("Failed to drop privileges"));
 
 	const int family = getfamily(device_id);
 	if (!family)

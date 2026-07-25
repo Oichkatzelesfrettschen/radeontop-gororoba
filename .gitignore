@@ -2,6 +2,7 @@
 libradeontop_xcb.so
 radeontop
 version.h
+version.h.tmp
 *.mo
 /src/
 /pkg/

@@ -12,8 +12,8 @@ pkgname=radeontop-gororoba
 pkgver=1.4
 # Bump pkgrel on every fork source change (new gauge, read-path fix, etc.) so a
 # rebuilt package is a distinguishable revision and `pacman -Syu`/`-U` treats it
-# as an upgrade.  -4: strict option parsing and BAR-range validation.
-pkgrel=4
+# as an upgrade.  -5: version identity, option boundaries, and analyzer gates.
+pkgrel=5
 pkgdesc="GPU utilization monitor with RS480/RS482 (RS4xx) BAR2 read-path"
 url="https://github.com/Oichkatzelesfrettschen/radeontop-gororoba"
 arch=('x86_64')
