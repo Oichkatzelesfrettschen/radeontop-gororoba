@@ -36,14 +36,20 @@ static void *collector(void *arg) {
 	struct bits_t *history = calloc(ticks * dumpinterval, sizeof(struct bits_t));
 	unsigned int cur = 0, curres = 0;
 
+	if (!history)
+		die(_("Failed to allocate the sample history"));
+
 	const useconds_t sleeptime = 1e6 / ticks;
 
 	while (1) {
 		unsigned int stat;
 		getgrbm(&stat);
-		unsigned int uvd;
+		// A family without a UVD or VCE lane leaves the mask at zero and the
+		// read unmade, and the accumulate below still tests the word.  Seed
+		// both at zero so that test reads a defined value on every family.
+		unsigned int uvd = 0;
 		if (bits.uvd) getsrbm(&uvd);
-		unsigned int vce;
+		unsigned int vce = 0;
 		if (bits.vce0) getsrbm2(&vce);
 
 		memset(&history[cur], 0, sizeof(struct bits_t));
@@ -131,6 +137,10 @@ void collect(unsigned int ticks, unsigned int dumpinterval) {
 	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 
 	struct collector_args_t *args = malloc(sizeof(*args));
+
+	if (!args)
+		die(_("Failed to allocate the collector arguments"));
+
 	args->ticks = ticks;
 	args->dumpinterval = dumpinterval;
 
