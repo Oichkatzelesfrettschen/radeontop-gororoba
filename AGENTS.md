@@ -381,14 +381,40 @@ independent comparison value.
 
 ## Evidence boundary
 
-Retained probes, oracles, and finding documents live in the sibling
-reverse-engineering tree, and this repository carries the citation. The r300
-lane resides at `steinmarder/src/re/r300/`, with `probes/`, `oracles/`,
-`registry/`, and `scripts/` beneath it. Cite the exact path spelling that exists
-on disk and only under a canonical checkout; a `steinmarder-*` sibling is
-transient workspace state, so evidence held there is cited by finding filename,
-register source, or commit SHA. When the sibling checkout is absent, the finding
-filename or the public register source carries the citation.
+This repository owns the monitoring tool: read paths, gauge mapping, packaging,
+and the source comments that make them intelligible. Retained probes, result
+bundles, findings, hazard policy, and the verdict assigned to a target-silicon
+run live in the sibling projects, and this repository carries the citation.
+
+Each sibling is an independent checkout with its own `AGENTS.md`; they sit
+alongside this one in the workspace. Cite a sibling by repository name plus its
+repository-relative path, matching the `radeon-custom` README convention, and
+let the workstation supply the equivalent absolute path.
+
+- `steinmarder-r300`: the RS482/RS485 (Dell Vostro 1000, PCI `1002:5974`)
+  evidence lane and the primary peer for the R300-class read path here. It owns
+  probes, manifests, logs, result bundles, falsifiers, and hazard policy under
+  `src/re/r300/`, with `findings/`, `results/`, `probes/`, `corpora/`,
+  `oracles/`, `registry/`, and `docs/` beneath it. The path predates the
+  `git filter-repo` extraction from the Steinmarder monorepo and is stable, so
+  historical finding links and bundle names stay valid.
+- `steinmarder-r600-terakan`: the r600 and Terakan evidence lane, under
+  `src/re/r600/`.
+- `steinmarder`: the shared and cross-architecture reverse-engineering root.
+- `mesa-26-gororoba`: the Mesa fork carrying r300g, r600g, and Terakan driver
+  code, and the registry of Vostro 1000 kernel modules under
+  `docs/hardware/vostro1000-kernel-modules.md`.
+- `radeon-custom`: the out-of-tree radeon DRM/DKMS source for the RS480, RS482,
+  RS485, and Palm lanes. A gauge reading taken against a patched kernel names
+  the DKMS revision that produced it.
+- `radeontool-gororoba`: the `radeontool regmatch` source used for the raw
+  `RBBM_STATUS` histograms that rank-1 gauge evidence rests on.
+- `vostro1000-re`: the RS482 host-platform lane, holding the board, ACPI,
+  COMBIOS, and firmware evidence under `systems/dell-vostro-1000/`.
+
+Cite the exact path spelling that exists in the sibling. When the sibling
+checkout is absent, the finding filename, the result-bundle name, the commit
+SHA, or the public register source carries the citation.
 
 Source comments prefer public register documentation, kernel symbols, DRM
 names, and exact hardware identity. Empirical fork evidence belongs in findings
