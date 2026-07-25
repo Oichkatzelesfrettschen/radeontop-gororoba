@@ -316,6 +316,17 @@ Default to a one-line trailing comment on the load-bearing line over a function
 header paragraph, and reserve a multi-line block for a genuine silicon quirk.
 Mechanical code reads bare.
 
+The language form follows the evidence class. Documented behavior takes the
+plain indicative. Reproduced-but-undocumented behavior names the part and the
+path where it was observed, so a reader knows the claim rests on a run rather
+than a register document. Conjecture carries a marker (`appears to`, `seems
+to`) or leaves.
+
+Placement follows scope. Architecture that persists across a file lives at file
+scope; the point of use carries the local link in the chain -- skip condition,
+bound state, offset rule; a branch comment states what distinguishes the
+branch, at the branch.
+
 A full mechanism comment orders its facts: the load-bearing claim, the named
 authority (register, bit, kernel symbol, ioctl), the consequence with an inline
 code fragment when clearer than prose, and the guard or scope. Most comments
