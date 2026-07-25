@@ -381,12 +381,14 @@ independent comparison value.
 
 ## Evidence boundary
 
-Retained probes, corpora, oracles, and finding documents live in the sibling
+Retained probes, oracles, and finding documents live in the sibling
 reverse-engineering tree, and this repository carries the citation. The r300
-lane resides at `steinmarder-r300/src/re/r300/`, with `findings/`, `results/`,
-`probes/`, and `docs/` beneath it. Cite the exact path spelling that exists on
-disk; when the sibling checkout is absent, cite the finding filename or the
-public register source instead.
+lane resides at `steinmarder/src/re/r300/`, with `probes/`, `oracles/`,
+`registry/`, and `scripts/` beneath it. Cite the exact path spelling that exists
+on disk and only under a canonical checkout; a `steinmarder-*` sibling is
+transient workspace state, so evidence held there is cited by finding filename,
+register source, or commit SHA. When the sibling checkout is absent, the finding
+filename or the public register source carries the citation.
 
 Source comments prefer public register documentation, kernel symbols, DRM
 names, and exact hardware identity. Empirical fork evidence belongs in findings
