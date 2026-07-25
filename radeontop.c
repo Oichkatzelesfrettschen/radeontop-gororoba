@@ -83,9 +83,22 @@ static void help(const char * const me, const unsigned int ticks,
 	exit(status);
 }
 
+// The binary runs setuid root on installations that need MMIO register access,
+// so a privilege transition that silently fails leaves the wrong credentials in
+// force for everything after it.  glibc marks the setuid family
+// warn_unused_result under _FORTIFY_SOURCE, and each call site here checks both
+// the return value and the resulting effective id, because the id is the
+// property that matters.
+static void drop_euid(void) {
+	const uid_t uid = getuid();
+
+	if (seteuid(uid) || geteuid() != uid)
+		die(_("Failed to drop effective privileges"));
+}
+
 int main(int argc, char **argv) {
 	// Temporarily drop privileges to do option parsing, etc.
-	seteuid(getuid());
+	drop_euid();
 
 	const unsigned int default_ticks = 120;
 	const unsigned int default_dumpinterval = 1;
@@ -173,11 +186,20 @@ int main(int argc, char **argv) {
 	}
 
 	// init (regain privileges for bus initialization and ultimately drop them afterwards)
-	seteuid(0);
+	// An unprivileged run cannot regain root and reports EPERM, and the DRM
+	// and xcb paths still work without it, so init_pci reports whichever
+	// access it cannot obtain.  Any other failure is unexpected.
+	if (seteuid(0) && errno != EPERM)
+		die(_("Failed to regain privileges"));
+
 	init_pci(path, &bus, &device_id, forcemem);
 	// after init_pci we can assume that bus/device_id exists (otherwise it would die())
 
-	setuid(getuid());
+	// Drop permanently before the collector, the UI, and the dump writer run.
+	// setuid moves the saved id too, so a failure here would leave every one
+	// of them able to return to root.
+	if (setuid(getuid()) || geteuid() != getuid())
+		die(_("Failed to drop privileges"));
 
 	const int family = getfamily(device_id);
 	if (!family)

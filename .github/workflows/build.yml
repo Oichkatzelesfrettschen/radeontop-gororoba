@@ -52,7 +52,11 @@ jobs:
       - name: Build
         env:
           CC: ${{ matrix.cc }}
-          CFLAGS: -O2 -Werror
+          # _FORTIFY_SOURCE is what gives the setuid family and vasprintf their
+          # warn_unused_result attribute.  Some distributions enable it by
+          # default and others do not, so the gate states it rather than
+          # inheriting whichever the runner image happens to apply.
+          CFLAGS: -O2 -Werror -D_FORTIFY_SOURCE=3
         run: make ${{ matrix.options }} plain=1
 
       - name: Confirm the stamped version reaches the binary
@@ -81,7 +85,7 @@ jobs:
         env:
           CC: clang
           CFLAGS: >-
-            -O2 -Wall -Wextra -Werror
+            -O2 -Wall -Wextra -Werror -D_FORTIFY_SOURCE=3
             -Wsometimes-uninitialized -Wconditional-uninitialized
         run: make plain=1
 

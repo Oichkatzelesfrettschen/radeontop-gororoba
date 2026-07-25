@@ -27,11 +27,21 @@ static void printcenter(const unsigned int y, const unsigned int width,
 	va_list ap;
 	va_start(ap, fmt);
 
+	// vasprintf leaves ptr indeterminate when it fails, and mbstowcs, mvprintw
+	// and free below all take it, so a failed allocation drops the line here.
 #ifdef ENABLE_NLS
-	vasprintf(&ptr, fmt, ap);
+	if (vasprintf(&ptr, fmt, ap) < 0) {
+		va_end(ap);
+		return;
+	}
 	const unsigned int len = mbstowcs(NULL, ptr, 0);
 #else
-	const unsigned int len = vasprintf(&ptr, fmt, ap);
+	const int written = vasprintf(&ptr, fmt, ap);
+	if (written < 0) {
+		va_end(ap);
+		return;
+	}
+	const unsigned int len = written;
 #endif
 
 	unsigned x = (width - len)/2;
@@ -50,11 +60,21 @@ static void printright(const unsigned int y, const unsigned int width,
 	va_list ap;
 	va_start(ap, fmt);
 
+	// vasprintf leaves ptr indeterminate when it fails, and mbstowcs, mvprintw
+	// and free below all take it, so a failed allocation drops the line here.
 #ifdef ENABLE_NLS
-	vasprintf(&ptr, fmt, ap);
+	if (vasprintf(&ptr, fmt, ap) < 0) {
+		va_end(ap);
+		return;
+	}
 	const unsigned int len = mbstowcs(NULL, ptr, 0);
 #else
-	const unsigned int len = vasprintf(&ptr, fmt, ap);
+	const int written = vasprintf(&ptr, fmt, ap);
+	if (written < 0) {
+		va_end(ap);
+		return;
+	}
+	const unsigned int len = written;
 #endif
 
 	unsigned x = (width - len);
