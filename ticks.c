@@ -16,6 +16,7 @@
 
 #include "radeontop.h"
 #include <pthread.h>
+#include <limits.h>
 
 struct bits_t *results = NULL;
 
@@ -132,9 +133,19 @@ void collect(unsigned int ticks, unsigned int dumpinterval) {
 	pthread_t tid;
 	pthread_attr_t attr;
 
+	// The window length indexes the history ring and divides every reported
+	// percentage, so a product that wraps yields a short ring and a wrong
+	// denominator.  Compute it in size_t and reject a value unsigned int
+	// cannot hold.
+	const size_t window = (size_t) ticks * dumpinterval;
+
+	if (!window || window > UINT_MAX)
+		die(_("Sample window out of range"));
+
 	// We don't care to join this thread
-	pthread_attr_init(&attr);
-	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+	if (pthread_attr_init(&attr) ||
+		pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED))
+		die(_("Failed to set up the collector thread attributes"));
 
 	struct collector_args_t *args = malloc(sizeof(*args));
 
@@ -144,5 +155,10 @@ void collect(unsigned int ticks, unsigned int dumpinterval) {
 	args->ticks = ticks;
 	args->dumpinterval = dumpinterval;
 
-	pthread_create(&tid, &attr, collector, args);
+	// A failed create leaves `results` NULL forever, and both output paths
+	// spin waiting for it, so the failure surfaces here instead.
+	if (pthread_create(&tid, &attr, collector, args))
+		die(_("Failed to start the collector thread"));
+
+	pthread_attr_destroy(&attr);
 }

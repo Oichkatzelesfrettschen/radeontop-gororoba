@@ -3,31 +3,38 @@
 RadeonTop reports R300-class (RS400/RS480/RS482/RS485) GPU utilization by
 sampling `RBBM_STATUS` through the BAR2 PCI sysfs `resourceN` node and
 accumulating set-bit counts into a duty-cycle estimate. This document states the
-read path, the bit-to-gauge map with the evidence rank behind each entry, and the
-statistical model the reported percentage obeys.
+read path, the bit-to-gauge map with the evidence behind each entry, the
+statistical model the reported percentage obeys, and the hardware hazard that
+bounds where the poller may read.
 
-Evidence ranks follow `AGENTS.md`: rank 1 is silicon readback on the target part,
-rank 2 is register documentation, rank 3 is kernel source, rank 4 is radeontop
-source, rank 5 is documentation. Every claim below carries its rank.
+Evidence carries three independent axes, because one ordering cannot represent
+them. A register readback names no field, and a kernel header establishes no
+target behavior.
+
+- **Field authority**: which register bit carries which name and meaning. Kernel
+  and vendor register definitions hold this.
+- **Target observation**: whether a bit was seen set or clear on RS482 silicon,
+  under which workload, with which sampler.
+- **Exposure policy**: whether radeontop renders a lane, which is a product
+  decision that follows from the first two rather than a property of silicon.
 
 ## Why the read path forks by family
 
 The radeon DRM `RADEON_INFO_READ_REG` ioctl is gated per ASIC by
 `get_allowed_info_register`. For the whole pre-R600 family the callback is
 `radeon_invalid_get_allowed_info_register`, which returns `-EINVAL` for every
-register (rank 3: `radeon_asic.c`). The ioctl therefore carries no engine-busy
-signal on R300-class parts, and no register whitelist entry can be added from
-userspace.
+register. The ioctl therefore carries no engine-busy signal on R300-class parts,
+and no register whitelist entry can be added from userspace.
 
 Two consequences follow. The libdrm path binds only on R600 and later, where
 engine-busy is `GRBM_STATUS` (`0x8010`). R300-class engine-busy is `RBBM_STATUS`
 (`0x0E40`), read directly from the register BAR.
 
 `radeon.c::init_radeon` skips the probe outright when the resolved family is
-below `R600`, because a probe that the kernel rejects by design prints a
-misleading `EINVAL` and proves nothing (rank 4).
+below `R600`, because a probe the kernel rejects by design prints a misleading
+`EINVAL` and proves nothing.
 
-### BAR mapping
+### BAR mapping and the aperture boundary
 
 `detect.c::open_pci` maps BAR2 through
 `/sys/bus/pci/devices/<domain>:<bus>:<dev>.<func>/resource2` rather than
@@ -35,190 +42,324 @@ misleading `EINVAL` and proves nothing (rank 4).
 `/dev/mem` access to driver-claimed device MMIO, so the legacy path dies on a
 modern kernel. The `resourceN` file is the BAR aperture itself, so its file
 offset is BAR-relative and carries no base-address term, and `MAP_SHARED` makes
-reads reach the device (rank 4).
+reads reach the device.
 
-`RBBM_STATUS` at `0x0E40` falls inside the window already mapped at offset 0 for
-the SRBM registers (`SRBM_MMAP_SIZE = 0xE54`), so `getgrbm_pci_r300` reads it
-from `srbm_area` without a second mapping. The R600+ GRBM window at `0x8000` is
-not mapped on this family: it is an R600 construct, and a `resourceN` mmap at
-`0x8000` fails outright when the R300 register BAR is smaller than that offset
-(rank 4).
+The aperture size is measured, not assumed. A retained same-boot `resource2`
+crosswalk on RS482 reads `CONFIG_REG_APER_SIZE` (`0x0110`) as `0x00008000`, so
+the register aperture is 32 KiB. The R600+ GRBM window begins at exactly
+`0x8000`, which is the first offset past the end of that aperture. The family
+branch in `open_pci` is therefore load-bearing rather than defensive: mapping the
+GRBM window on this part addresses memory the device does not decode.
+
+`RBBM_STATUS` at `0x0E40` sits inside the window mapped at offset 0 for the SRBM
+registers (`SRBM_MMAP_SIZE = 0xE54`), so `getgrbm_pci_r300` reads it from
+`srbm_area` without a second mapping. The same crosswalk reads `0x0E40` directly
+and returns the idle baseline `0x00000140` with the boot ID unchanged across the
+capture, which confirms the offset is safe to read on this part.
 
 `radeontop -m` forces the direct MMIO path on any card, which is also the only
 supported path under the Catalyst driver.
 
+### The read range is a safety boundary, not hygiene
+
+On this platform an MMIO read that never completes is unrecoverable. The K8
+on-die northbridge on the Dell Vostro 1000 reads `D18F3x44 = 0x0A100040`:
+`WdogTmrDis` (bit 8) clear, so the northbridge watchdog is enabled, and
+`SyncOnWdogEn` (bit 20) set, so a watchdog timeout floods every HyperTransport
+link with sync packets. Per AMD BKDG #32559 sections 4.4.5.3 and 4.6.4.7 the
+watchdog covers northbridge accesses awaiting a response, and this part is
+single-socket, so the only HyperTransport link is the I/O link to the RS482 host
+bridge. A non-posted read of a clock-gated RS482 register therefore times out
+and floods.
+
+A gated experiment cleared `SyncOnWdogEn` and re-read a confirmed wedge offset:
+both cores still froze and the machine needed a manual power cycle. The sync
+flood is therefore not the proximate cause, and the freeze survives its removal.
+The operative conclusion for this tool is unchanged and stronger: a read of the
+wrong offset on this hardware ends the session with a cold power cycle, no log,
+and no software exit.
+
+A free-running poller reading a mapped BAR at 120 Hz is exactly the shape that
+hazard punishes. Two consequences bind this repository. The poller reads only
+offsets with a retained same-boot safe-read observation, currently `0x0E40` and
+the SRBM window. Any new lane reading an unproven offset belongs in a gated
+probe with boot-ID capture, in the evidence lane, rather than in this tool.
+
 ## RBBM_STATUS field map
 
-The decode is `R_000E40_RBBM_STATUS` in `r300d.h` (rank 3), read from the
+Field authority is `R_000E40_RBBM_STATUS` in `r300d.h`, read from the
 `radeon-custom` DKMS source at
-`packaging/arch/radeon-unified-dkms/.../radeon/r300d.h`.
+`packaging/arch/radeon-unified-dkms/.../radeon/r300d.h`. `rs400d.h` carries the
+identical definitions.
 
-| Bit | `r300d.h` field | radeontop lane | UI label | Rank | Asserting load |
+Target observation is the retained histogram in `Provenance` below. "Set" means
+the bit was observed set in at least one sample; "clear" means it was clear in
+every sample of every workload tried, which is negative evidence about
+observability rather than proof the signal is unwired.
+
+| Bit | `r300d.h` field | Field kind | Target observation | radeontop lane | Exposed |
 |---|---|---|---|---|---|
-| 0-6 | `CMDFIFO_AVAIL` | none | none | 3 | count field, not a flag |
-| 8 | `HIRQ_ON_RBB` | none | none | 3 | request queue occupancy |
-| 9 | `CPRQ_ON_RBB` | none | none | 3 | request queue occupancy |
-| 10 | `CFRQ_ON_RBB` | none | none | 3 | request queue occupancy |
-| 11 | `HIRQ_IN_RTBUF` | none | none | 3 | request queue occupancy |
-| 12 | `CPRQ_IN_RTBUF` | none | none | 3 | request queue occupancy |
-| 13 | `CFRQ_IN_RTBUF` | none | none | 3 | request queue occupancy |
-| 14 | `CF_PIPE_BUSY` | `cf` | Cmd Fetch | 1 | sustained 3D fill |
-| 15 | `ENG_EV_BUSY` | `ee` | Event Engine | 1 | sustained 3D fill |
-| 16 | `CP_CMDSTRM_BUSY` | `cp` | Command Stream | 1 | sustained 3D fill |
-| 17 | `E2_BUSY` | `e2` | 2D Engine | 3 | unobserved |
-| 18 | `RB2D_BUSY` | `rb2d` | 2D Backend | 3 | unobserved |
-| 19 | `RB3D_BUSY` | masked off | none | 1 | clear under 3D fill |
-| 20 | `VAP_BUSY` | `vgt` | Vertex Grouper | 1 | sustained 3D fill |
-| 21 | `RE_BUSY` | masked off | none | 1 | clear under 3D fill |
-| 22 | `TAM_BUSY` | masked off | none | 1 | clear under 3D fill |
-| 23 | `TDM_BUSY` | masked off | none | 1 | clear under 3D fill |
-| 24 | `PB_BUSY` | masked off | none | 3 | no documented block meaning |
-| 25 | `TIM_BUSY` | masked off | none | 1 | clear under 3D fill |
-| 26 | `GA_BUSY` | `pa` | Primitive Assembly | 1 | sustained 3D fill |
-| 27 | `CBA2D_BUSY` | `rb2d` | 2D Backend | 3 | unobserved |
-| 31 | `GUI_ACTIVE` | `gui` | Graphics Pipe | 1 | any engine running |
+| 0-6 | `CMDFIFO_AVAIL` | 7-bit count | varies per sample | none | no |
+| 8 | `HIRQ_ON_RBB` | queue condition | set | none | no |
+| 9 | `CPRQ_ON_RBB` | queue condition | clear | none | no |
+| 10 | `CFRQ_ON_RBB` | queue condition | clear | none | no |
+| 11 | `HIRQ_IN_RTBUF` | queue condition | clear | none | no |
+| 12 | `CPRQ_IN_RTBUF` | queue condition | clear | none | no |
+| 13 | `CFRQ_IN_RTBUF` | queue condition | set | none | no |
+| 14 | `CF_PIPE_BUSY` | block busy | set under load | `cf` | yes |
+| 15 | `ENG_EV_BUSY` | block busy | set under load | `ee` | yes |
+| 16 | `CP_CMDSTRM_BUSY` | block busy | set under load | `cp` | yes |
+| 17 | `E2_BUSY` | block busy | clear | `e2` | on assertion |
+| 18 | `RB2D_BUSY` | block busy | clear | `rb2d` | on assertion |
+| 19 | `RB3D_BUSY` | block busy | clear | masked off | no |
+| 20 | `VAP_BUSY` | block busy | set, 1 of 250 samples | `vgt` | yes |
+| 21 | `RE_BUSY` | block busy | clear | masked off | no |
+| 22 | `TAM_BUSY` | block busy | clear | masked off | no |
+| 23 | `TDM_BUSY` | block busy | clear | masked off | no |
+| 24 | `PB_BUSY` | undocumented | clear | masked off | no |
+| 25 | `TIM_BUSY` | block busy | clear | masked off | no |
+| 26 | `GA_BUSY` | block busy | set under load | `pa` | yes |
+| 27 | `CBA2D_BUSY` | block busy | clear | `rb2d` | on assertion |
+| 31 | `GUI_ACTIVE` | aggregate busy | set under load | `gui` | yes |
 
-`initbits(RS480)` in `detect.c` sets exactly these masks and zeroes every lane
-without an R300 analogue (`ta`, `tc`, `sx`, `sh`, `spi`, `smx`, `sc`, `cb`, `db`,
-`cr`, `uvd`, `vce0`). `dump.c` and `ui.c` gate each lane's output on its mask, so
-a family that lacks a block renders no gauge for it rather than a constant zero.
+### Lane predicates
 
-## Decomposing the observed histogram
+A lane is a mask, and its sample value is a predicate rather than a counter:
 
-The rank-1 observation is a raw `RBBM_STATUS` histogram taken with
-`radeontool regmatch` on RS482 under an uncapped `glxgears` load. The ORed word
-across samples is `0x8411E17C`. Decomposed against the `r300d.h` field map:
+```text
+X_i = ((status_i & lane_mask) != 0)
+```
 
-- `CMDFIFO_AVAIL` (bits 0-6) ORs to 124 of a 127 maximum.
-- `HIRQ_ON_RBB` (8) and `CFRQ_IN_RTBUF` (13) set.
-- Busy flags set: `CF_PIPE_BUSY`, `ENG_EV_BUSY`, `CP_CMDSTRM_BUSY`, `VAP_BUSY`,
-  `GA_BUSY`, `GUI_ACTIVE`.
-- Busy flags clear: `E2_BUSY`, `RB2D_BUSY`, `RB3D_BUSY`, `RE_BUSY`, `TAM_BUSY`,
-  `TDM_BUSY`, `PB_BUSY`, `TIM_BUSY`, `CBA2D_BUSY`.
+`rb2d` masks bits 18 and 27 together, so its reported value is the fraction of
+samples in which `RB2D_BUSY` or `CBA2D_BUSY` was set. It carries no per-block
+resolution, and the two backends cannot be separated from its output.
 
-Three results follow from that decomposition.
+### Lane labels
 
-The low seven bits are a saturating OR over a **count** field, not a busy flag.
-`CMDFIFO_AVAIL` reports how many command-FIFO entries are free, so an OR across
-samples yields the bitwise union of every depth observed, and its value carries
-no duty-cycle meaning. Gauging any of bits 0-6 is a category error, and the
-value 124 records only that the FIFO reached near-empty occupancy at some point
-during the run. The same argument disqualifies bits 8 through 13, which report
-request-queue occupancy rather than block activity.
+Three UI labels are inherited from the R600 lane set and overstate what the R300
+field names establish. `vgt` renders as "Vertex Grouper + Tesselator" while the
+R300 field is `VAP_BUSY`; `cf` renders as "Cmd Fetch" while the field names only
+`CF_PIPE`; `rb2d` renders as "2D Backend" for a two-bit union. The precise
+R300-side names are `VAP`, `CF pipe`, and `RB2D or CBA2D`, and the rendered
+labels are interpretations layered on those.
 
-A busy bit that stays clear under a load that must exercise its block refutes
-the decode's applicability to this derivative. The rasterizer (`RE_BUSY`), the
-texture units (`TAM`, `TDM`, `TIM`), and the 3D render backend (`RB3D_BUSY`)
-cannot be idle during a sustained textured fill, so their permanent clearness
-means this RBBM does not aggregate those back-end busy signals. That inference
-is stronger than the kernel header, because the header documents the field
-layout and not which signals a given derivative wires into it. Perpetual-zero
-gauges mislead, so those lanes stay masked.
+## Provenance
 
-The 2D lanes are mapped from rank 3 and lack rank-1 confirmation. `E2_BUSY`,
-`RB2D_BUSY`, and `CBA2D_BUSY` stay clear in this histogram, which the 3D
-workload explains. A separate `x11perf -copywinwin500` run also left them idle
-at `gpu`/`pa`/`cp` 90 percent, because the modern DDX routes copies through the
-3D engine rather than the 2D block. The lanes therefore rest on the kernel
-decode alone, and no observed load has yet asserted them.
+The rank-1 histogram is retained at
+`steinmarder-r300@9d04840:src/re/r300/findings/active/2026-06-10-rs482-rbbm-backend-busy-bits-nonlatching-under-load.md`,
+`sha256:78956562f2264bc059886b83...`, marked `canonical: false`.
 
-### Falsifiers
+| Field | Value |
+|---|---|
+| Target | RS482, PCI `1002:5974`, host `cachyos-vostro1000` |
+| Sampler | `radeontool regmatch 0xe40`, 250 reads |
+| Workload | `glmark2-es2` texture scene, 800x600 fill at 126 FPS, live X server on r300 |
+| Samples | 157x `0x00000140`, 91x `0x8401C100`, 1x `0x84116100`, 1x `0x8401C12B` |
+| Aggregate OR | `0x8411E16B` |
 
-- A masked-off lane reopens when a load that exercises its block asserts its bit
-  on RS4xx silicon. `RB3D_BUSY` under a load that bypasses the 2D path, or
-  `TAM_BUSY` under a texture-bound fill, refutes the non-aggregation finding.
-- The 2D lanes confirm when a workload that reaches the 2D block asserts bit 17,
-  18, or 27. A DDX build with 3D acceleration disabled is the candidate load.
-- The `CMDFIFO_AVAIL` reading refutes the count interpretation if bits 0-6
-  behave as independent flags, which a histogram of per-sample values rather
-  than their OR would show.
+An earlier commit in this repository cited an aggregate of `0x8411E17C`
+attributed to an uncapped `glxgears` run. That value differs from the retained
+histogram in bits 0, 1, 2, and 4, all inside the `CMDFIFO_AVAIL` field, and no
+raw capture backing it is present in the evidence lane. This document cites the
+traceable histogram only, and the busy-bit conclusions are unchanged because the
+two aggregates agree on every bit above 13.
+
+A citation that supports a measurement names the repository and commit, the
+file, the target PCI ID, the boot or run ID, the sampler command, the workload
+command, the sample count, and the digest. A pointer to a directory is a search
+instruction rather than provenance.
+
+## What the aggregate OR does and does not establish
+
+The low seven bits are `CMDFIFO_AVAIL`, a count of free command-FIFO entries.
+Bitwise OR across samples of an encoded count is not a maximum, a minimum, a
+mean, or an occurrence test for any particular value. It establishes only which
+encoding bits were set in at least one sample.
+
+The retained aggregate `0x8411E16B` has low bits `0x6B`, and no single sample in
+the histogram contains that value: the four observed samples carry FIFO fields
+`0x40`, `0x00`, `0x00`, and `0x2B`. A general counterexample makes the point
+without reference to this data set:
+
+```text
+observed counts:  64, 32, 16, 8, 4
+bitwise OR:       124
+maximum observed: 64
+```
+
+No sample equals 124. Reading a scalar FIFO depth out of an aggregate OR is an
+invalid operation on a packed numeric field. FIFO behavior requires decoding
+`CMDFIFO_AVAIL` in each raw sample and retaining the resulting distribution or
+time series.
+
+Bits 8 through 13 need a narrower correction. They report request-queue
+conditions rather than block activity, so they are unsuitable as engine-busy
+gauges. They are not informationless: a per-sample mean over those bits would
+estimate the fraction of sampled instants at which each queue condition held.
+Only their OR is uninformative, and for the same reason.
+
+## What the clear back-end bits establish
+
+`RB3D_BUSY`, `RE_BUSY`, `TAM_BUSY`, `TDM_BUSY`, and `TIM_BUSY` are clear in every
+retained sample under a sustained textured fill that must exercise the
+rasterizer, the texture units, and the 3D render backend.
+
+That observation does not refute the register decode. The kernel header
+establishes field positions, and a finite sampler that never observes a bit set
+gives negative evidence about that bit's **observability on this target under
+these conditions**. Establishing that the silicon does not aggregate those
+signals additionally requires an independent witness that the blocks were active
+at the sampled instants, and enough temporal resolution to bound missed pulses.
+Neither exists in the retained record; the sibling finding preserves exactly
+that falsifier and is marked non-canonical.
+
+The exposure decision stands on its own footing and is a fail-closed product
+policy rather than a silicon claim:
+
+> A lane that has never asserted on the target under any recorded workload
+> renders as a permanent `0.00%`, which a reader cannot distinguish from a
+> confirmed-idle block. Such lanes stay hidden until a sample captures an
+> assertion.
+
+`initbits(RS480)` implements that policy by zeroing those masks, and `dump.c`
+and `ui.c` suppress any lane whose mask is zero.
+
+### The 2D lanes have three live explanations
+
+`E2_BUSY`, `RB2D_BUSY`, and `CBA2D_BUSY` are clear in the retained histogram,
+which the 3D workload explains on its own. A separate `x11perf -copywinwin500`
+run at 235 copies per second drove `gui`, `pa`, and `cp` to 90 percent and left
+the 2D lanes idle.
+
+An earlier explanation in this repository stated categorically that the modern
+DDX routes copies through the 3D engine. That is false as a general claim about
+`xf86-video-ati`: `src/radeon_exa_funcs.c` implements `RADEONCopy` over the
+hardware 2D engine and submits `Emit2DState(pScrn, RADEON_2D_EXA_COPY)`, and
+that legacy path is the one selected for R300-class parts. The statement can
+still hold for the specific tested server if it selected glamor rather than EXA,
+which the retained record does not establish.
+
+Three explanations therefore remain live:
+
+1. The tested acceleration path bypassed the hardware 2D engine, for example
+   through glamor.
+2. RS482 does not aggregate the 2D block busy signals into `RBBM_STATUS`.
+3. The 2D assertions were shorter than the sampling interval or phase-correlated
+   with it.
+
+The discriminator is a run that records the X server's acceleration method, from
+the Xorg log or the configured `AccelMethod`, alongside a register or
+command-stream trace. Until that runs, the zero 2D lanes select no explanation.
+
+## Falsifiers
+
+- A masked-off lane reopens when any workload or configuration asserts its bit
+  on RS4xx silicon: a legacy userspace driving longer per-draw rasterization
+  windows, a different clock-gating configuration through `SCLK_CNTL` dynamic
+  stop latches, or a kernel that programs RBBM differently.
+- A higher-rate sampler that catches sub-millisecond assertions the 120 Hz
+  monitor and the `regmatch` loop both alias over overturns every
+  non-observation above.
+- The 2D lanes confirm when a run with EXA acceleration recorded asserts bit 17,
+  18, or 27.
+- The FIFO count interpretation refutes if a per-sample decode shows bits 0
+  through 6 behaving as independent flags rather than an encoded count.
 
 ## The reported percentage is a sampled duty cycle
 
-`ticks.c::collector` samples a level signal and counts set bits. It carries no
-hardware performance counter, so the reported percentage is a statistical
+`ticks.c::collector` samples a level signal and counts predicate hits. It reads
+no hardware performance counter, so the reported percentage is a statistical
 estimate rather than a measurement of occupancy.
 
 The collector sleeps `sleeptime = 1e6 / ticks` microseconds between samples and
 accumulates over `N = ticks * dumpinterval` samples per report. `dump.c` and
-`ui.c` normalize with `k = 1.0f / ticks / dumpinterval`, so a lane's reported
-value is
+`ui.c` normalize with `k = 1.0f / ticks / dumpinterval`, so a lane reports
 
 ```text
-p_hat = (1 / N) * sum(b_i for i in 1..N) * 100 percent
+p_hat = (1 / N) * sum(X_i for i in 1..N) * 100 percent
 ```
 
-where `b_i` is the lane's bit in sample `i`. Defaults are `ticks = 120` and
-`dumpinterval = 1`, giving `N = 120` samples at a nominal 8333 microsecond
-interval.
+with `X_i` the lane predicate above. `p_hat` is the fraction of **sampled
+instants** at which the lane was set. Equating it with an elapsed-time duty cycle
+requires the sample instants to be unbiased with respect to the workload, which
+the following three properties bound. Defaults are `ticks = 120` and
+`dumpinterval = 1`, giving `N = 120`.
 
-Three properties follow, and each bounds how the number may be read.
+### Sampling correlated with the workload biases the estimate
 
-**The estimator is unbiased only under sampling independent of the workload.**
-Each `b_i` is a Bernoulli draw from the block's true duty cycle `p`. The mean of
-`p_hat` equals `p` when the sample instants are uncorrelated with the workload's
-period. A workload whose period is commensurate with the 8333 microsecond
-interval biases the estimate in either direction, and a frame-locked renderer is
-exactly such a workload.
+Each `X_i` is a Bernoulli draw whose expectation equals the true occupancy only
+when the sample instants are uncorrelated with the workload's phase. Commensurate
+periods bias it in either direction, and a frame-locked renderer against a
+fixed-rate sampler is exactly such a pairing. The failure mode is phase locking
+at any commensurate frequency rather than activity above any particular rate;
+Nyquist governs reconstruction of a band-limited waveform and does not set a
+threshold for estimating the mean of a binary level process. A 1 Hz workload
+sampled at 1 Hz with fixed phase is maximally biased, and a 1 kHz pulse train
+sampled at randomized phase is estimated well.
 
-**Precision is bounded by `N`, not by the sampling hardware.** The standard
-error is `sqrt(p(1-p)/N)`. At `p = 0.9` and `N = 120` that is 2.7 percentage
-points at one sigma, which accounts for the 88 to 90 percent band the command
-stream lane occupies in the rank-1 fill run. Reading a one-point difference
-between two lanes as a real difference overreads the estimator. Raising `ticks`
-narrows the interval as `1/sqrt(N)` and raises polling cost linearly.
+### The IID error bound is a reference value, not the instrument's uncertainty
 
-**Activity faster than half the sample rate aliases.** The sampler resolves duty
-cycles of processes slower than 60 Hz at the default rate. A block toggling near
-120 Hz folds to an arbitrary apparent duty cycle, so a lane that hovers at an
-implausible steady value under a varying load is a candidate alias rather than a
-finding.
+For independent samples the standard error is `sqrt(p(1-p)/N)`, which is 2.7
+percentage points at `p = 0.9` and `N = 120`. GPU busy states carry temporal
+autocorrelation: adjacent samples fall inside the same frame, command batch, and
+scheduler episode. For a stationary binary series the variance is
 
-`usleep` guarantees a lower bound on the sleep, not an exact interval, so the
-true interval carries scheduler jitter and exceeds the nominal value under load.
-That lengthens the accumulation window rather than skewing individual draws, and
-it leaves `N` intact because the loop counts samples rather than elapsed time.
+```text
+Var(p_hat) = (1/N^2) * [ N*g_0 + 2 * sum((N-k) * g_k for k in 1..N-1) ]
+```
+
+with `g_k` the lag-`k` autocovariance. Positive autocorrelation shrinks the
+effective sample size, so the IID figure is a lower bound on the true spread. The
+88 to 90 percent band the command-stream lane occupies in the recorded run is
+consistent with that figure but is not explained by it; separating them needs an
+autocorrelation estimate or repeated independent windows, neither of which is
+retained.
+
+### Relative sleep biases the sample-time distribution
+
+The collector reads the registers and then calls `usleep` for a fixed relative
+interval. Read time therefore adds to every period, the achieved rate is below
+the requested `ticks`, and the offset accumulates as drift. Scheduler delay can
+correlate with the workload or with its submission thread, so the delay is not
+guaranteed to be independent of what is being measured. `N` stays intact because
+the loop counts samples rather than elapsed time, but the sample instants are not
+a clean fixed-rate grid.
+
+An absolute `CLOCK_MONOTONIC` deadline, retained timestamps, and a missed-deadline
+count would make the achieved sampling process observable. None is implemented.
 
 ## Reproduction
 
-Sample the gauges, dump one line per second:
-
 ```sh
-./radeontop -m -d - -t 120 -i 1
+./radeontop -m -d - -t 120 -i 1          # sample the gauges, one line per second
+radeontool regmatch 0xe40                # raw register histogram, sibling tool
 ```
 
-Loads used for the rank-1 observations:
+Loads used for the retained observations:
 
 ```sh
-glxgears                                  # uncapped 3D, the histogram load
-glmark2-es2 --benchmark texture           # sustained textured fill, 126 FPS
-x11perf -copywinwin500                    # 2D copy, routed through the 3D engine
-```
-
-Capture the raw register histogram with the sibling tool:
-
-```sh
-radeontool regmatch RBBM_STATUS
+glmark2-es2 --benchmark texture          # sustained textured fill, 126 FPS
+x11perf -copywinwin500                   # 2D copy, 235 copies per second
 ```
 
 Retained bundles, probe scripts, hazard policy, and the verdict assigned to each
 run live in `steinmarder-r300` under `src/re/r300/`. This repository carries the
 citation, not the bundle.
 
-## Rank-1 observations on record
+## Recorded observations
 
-Measured on the RS482 target. Loads are named; unnamed conditions are not
-measured.
+Measured on the RS482 target with the monitor sampling at 120 Hz. Loads are
+named; unnamed conditions are not measured. Values carry the uncertainty
+discussed above and are not tighter than the IID reference.
 
 | Load | gpu | cp | ee | pa | vgt | Memory |
 |---|---|---|---|---|---|---|
 | Idle | 0 | 0 | 0 | 0 | 0 | none |
 | `glmark2-es2` texture, 126 FPS | 90 | 88-90 | 89 | 90 | 0.8-5.8 | VRAM 31 to 56 percent |
-| `x11perf -copywinwin500` | 90 | 90 | not recorded | 90 | not recorded | VRAM 97.8 percent, GTT 814 MB |
+| `x11perf -copywinwin500`, 235 copies/s | 90 | 90 | not recorded | 90 | not recorded | VRAM 97.8 percent, GTT 814 MB |
 
-Values are percentages from the estimator above and carry its 2.7 point standard
-error at `N = 120`. The `cf` lane postdates these runs and has its assertion
-recorded in the histogram rather than a percentage.
+`ta`, `sc`, `cb`, and `db` stayed at zero across every sample of three runs
+(idle, a 136-case deqp texture-filtering run, and the sustained fill).
 
 ## GART and MC observation
 
@@ -228,15 +369,27 @@ recorded in the histogram rather than a percentage.
 and `dump.c` emits them as a single `#` header line when all three parse. The
 debugfs file comes from the `steinmarder` RS480 candidate-regs lane rather than
 stock upstream radeon, so an absent file leaves the header out and the run
-otherwise unchanged (rank 4).
+otherwise unchanged.
 
 ## Open work
 
-- The 2D lanes (`e2`, `rb2d`) need a load that reaches the 2D block for rank-1
-  confirmation.
-- `PB_BUSY` (bit 24) carries no block meaning in `r300d.h` and stays unmapped
-  until a source names it.
-- The per-block cache status registers in the `0x4xxx` window are the readable
-  alternative to the non-aggregating back-end busy bits. They belong to a gated
-  probe lane rather than a free-running poller, because a poller reading them
-  adds bus traffic on every tick.
+Named slices, each independently landable.
+
+- **Evidence**: a run recording the X acceleration method plus a trace, to
+  discriminate the three 2D explanations. A higher-rate sampler to bound missed
+  assertions on the clear back-end bits. A per-sample `CMDFIFO_AVAIL`
+  distribution rather than an aggregate.
+- **Collector**: backend-return-value accounting so a failed read becomes an
+  invalid sample rather than an idle one; absolute monotonic deadlines with
+  retained timestamps and a missed-deadline count; generation-numbered snapshot
+  publication under a mutex, replacing the current unsynchronized reader access.
+- **MMIO**: explicit `volatile` device reads, so the source requires a fresh read
+  rather than relying on the current indirect-call structure to force one.
+- **Packaging and CI**: an immutable package source pinned to a commit rather
+  than a tar of the working directory, and a GCC plus Clang matrix that binds the
+  static-analysis result to the commit users receive.
+- **Unmapped**: `PB_BUSY` (bit 24) carries no block meaning in `r300d.h` and
+  stays unmapped until a source names it. The per-block cache status registers in
+  the `0x4xxx` window are the readable alternative to the non-observable back-end
+  bits, and they belong to a gated probe with boot-ID capture rather than a
+  free-running poller.

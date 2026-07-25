@@ -17,10 +17,34 @@
 
 #include "radeontop.h"
 #include <getopt.h>
+#include <errno.h>
+#include <limits.h>
 
 void die(const char * const why) {
 	fprintf(stderr, "%s\n", why);
 	exit(1);
+}
+
+// atoi reports no error: a non-numeric argument becomes 0 and a negative one
+// wraps through the unsigned option variables, so -t 0 reaches a modulo by zero
+// in the collector and -t -1 reaches a 4-billion-sample window.  Accept a whole
+// decimal argument inside [lo, hi] and reject everything else.
+static unsigned int parse_count(const char * const arg, const char * const what,
+				unsigned long lo, unsigned long hi) {
+	char *end = NULL;
+	unsigned long value;
+
+	errno = 0;
+	value = strtoul(arg, &end, 10);
+
+	if (errno || !end || end == arg || *end || strchr(arg, '-') ||
+		value < lo || value > hi) {
+		fprintf(stderr, _("Invalid %s '%s': expected %lu to %lu\n"),
+			what, arg, lo, hi);
+		exit(1);
+	}
+
+	return (unsigned int) value;
 }
 
 static void version() {
@@ -98,7 +122,7 @@ int main(int argc, char **argv) {
 				help(argv[0], default_ticks, default_dumpinterval);
 			break;
 			case 't':
-				ticks = atoi(optarg);
+				ticks = parse_count(optarg, _("tick count"), 1, 1000000);
 			break;
 			case 'T':
 				transparency = 1;
@@ -116,15 +140,13 @@ int main(int argc, char **argv) {
 				version();
 			break;
 			case 'l':
-				limit = atoi(optarg);
+				limit = parse_count(optarg, _("dump limit"), 0, UINT_MAX);
 			break;
 			case 'd':
 				dump = optarg;
 			break;
 			case 'i':
-				dumpinterval = atoi(optarg);
-				if (dumpinterval < 1)
-					dumpinterval = 1;
+				dumpinterval = parse_count(optarg, _("dump interval"), 1, 86400);
 			break;
 			case 'p':
 				path = optarg;

@@ -141,7 +141,19 @@ static void open_pci(struct pci_device *gpu_device) {
 	if (getfamily(gpu_device->device_id) >= BONAIRE)
 		reg = 5;
 
-	if (!gpu_device->regions[reg].size) die(_("Can't get the register area size"));
+	const uint64_t barsize = gpu_device->regions[reg].size;
+
+	if (!barsize) die(_("Can't get the register area size"));
+
+	// Read only offsets the BAR decodes.  On the K8/RS482 platform a
+	// non-completing northbridge read is unrecoverable: D18F3x44 reads
+	// WdogTmrDis clear, so the northbridge watchdog is armed, and a gated
+	// experiment showed both cores freezing with no MCE and no software exit
+	// (AMD BKDG #32559 sections 4.4.5.3 and 4.6.4.7).  A mapping wider than the
+	// aperture puts that read one dereference away, so the size check runs
+	// before mmap rather than after a fault.
+	if (barsize < SRBM_MMAP_SIZE)
+		die(_("Register BAR is smaller than the status window"));
 
 //	printf("Found area %p, size %lu\n", area, dev->regions[reg].size);
 
@@ -176,6 +188,14 @@ static void open_pci(struct pci_device *gpu_device) {
 		// GART/MC observations once before dropping privileges.
 		init_rs480_gart_observed();
 	} else {
+		// A same-boot resource2 crosswalk on RS482 reads CONFIG_REG_APER_SIZE
+		// (0x0110) as 0x00008000, so the GRBM window begins at the first offset
+		// past that aperture.  The family branch keeps this map off R300-class
+		// parts, and the size check keeps it off any other BAR too small to
+		// decode it.
+		if (barsize < 0x8000 + MMAP_SIZE)
+			die(_("Register BAR is smaller than the GRBM window"));
+
 		area = mmap(NULL, MMAP_SIZE, PROT_READ, MAP_SHARED, mem, 0x8000);
 		if (area == MAP_FAILED) die(_("mmap failed"));
 		getgrbm = getgrbm_pci;
@@ -188,8 +208,12 @@ static void open_pci(struct pci_device *gpu_device) {
 }
 
 static void cleanup_pci() {
-	munmap((void *) area, MMAP_SIZE);
-	munmap((void *) srbm_area, SRBM_MMAP_SIZE);
+	// The DRM path maps neither window, and the R300-class path maps only the
+	// offset-0 one, so each unmap runs against the pointer that was set.
+	if (area)
+		munmap((void *) area, MMAP_SIZE);
+	if (srbm_area)
+		munmap((void *) srbm_area, SRBM_MMAP_SIZE);
 }
 
 #ifdef HAS_DRMGETDEVICE
