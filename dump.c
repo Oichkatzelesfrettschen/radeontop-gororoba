@@ -17,33 +17,123 @@
 
 #include "radeontop.h"
 
-static unsigned char quit = 0;
+#include <math.h>
 
-static void sighandler(int sig) {
+// The dumper owns no clock.  One published generation is one completed
+// measurement window, so waiting for a generation newer than the last printed
+// one is what makes a line correspond to exactly one window.  An independent
+// sleep would print a generation twice or skip one whenever a window ran long,
+// and nothing in the old output could distinguish either case.
+#define DUMP_POLL_MS 200
 
-	switch (sig) {
-		case SIGTERM:
-		case SIGINT:
-			quit = 1;
-		break;
-	}
+// Renders a lane duty, or N/A when the window validated no read of the register
+// the lane comes from.  A 0.00% there would read as a confirmed-idle block.
+static const char *format_percent(char *buffer, size_t size, double fraction) {
+	if (isnan(fraction))
+		snprintf(buffer, size, "N/A");
+	else
+		snprintf(buffer, size, "%.2f%%", 100.0 * fraction);
+
+	return buffer;
 }
 
-void dumpdata(const unsigned int ticks, const char file[], const unsigned int limit,
-		const unsigned char bus, const unsigned int dumpinterval) {
+static void lane_field(FILE *f, const struct engine_masks *masks,
+		const struct collector_snapshot *snapshot,
+		enum collector_lane lane, const char *name, const char *separator) {
+	char buffer[16];
+
+	// A zero mask means the block is absent on this family, or its exposure
+	// on the target remains unconfirmed and the lane stays unexposed until
+	// an observation supports it.
+	if (!masks->lane[lane])
+		return;
+
+	fprintf(f, "%s%s %s", separator, name,
+		format_percent(buffer, sizeof(buffer),
+			collector_lane_fraction(snapshot, lane)));
+}
+
+static void dump_line(FILE *f, const struct engine_masks *masks,
+		const struct collector_snapshot *snapshot, unsigned char bus) {
+	char buffer[16];
+
+	// The timestamp labels the window's scheduled end, taken by the
+	// collector.  Stamping it here would date the measurement by however
+	// long this writer was blocked.
+	fprintf(f, "%llu.%06llu: ",
+		(unsigned long long) snapshot->window_end_realtime.tv_sec,
+		(unsigned long long) (snapshot->window_end_realtime.tv_nsec / 1000));
+
+	fprintf(f, "bus %02x, ", bus);
+
+	fprintf(f, "gpu %s, ", format_percent(buffer, sizeof(buffer),
+		collector_lane_fraction(snapshot, COLLECTOR_LANE_GUI)));
+	fprintf(f, "ee %s, ", format_percent(buffer, sizeof(buffer),
+		collector_lane_fraction(snapshot, COLLECTOR_LANE_EE)));
+	fprintf(f, "vgt %s", format_percent(buffer, sizeof(buffer),
+		collector_lane_fraction(snapshot, COLLECTOR_LANE_VGT)));
+
+	lane_field(f, masks, snapshot, COLLECTOR_LANE_TA, "ta", ", ");
+	lane_field(f, masks, snapshot, COLLECTOR_LANE_TC, "tc", ", ");
+	lane_field(f, masks, snapshot, COLLECTOR_LANE_SX, "sx", ", ");
+	lane_field(f, masks, snapshot, COLLECTOR_LANE_SH, "sh", ", ");
+	lane_field(f, masks, snapshot, COLLECTOR_LANE_SPI, "spi", ", ");
+	lane_field(f, masks, snapshot, COLLECTOR_LANE_SMX, "smx", ", ");
+	lane_field(f, masks, snapshot, COLLECTOR_LANE_CR, "cr", ", ");
+	lane_field(f, masks, snapshot, COLLECTOR_LANE_SC, "sc", ", ");
+	lane_field(f, masks, snapshot, COLLECTOR_LANE_PA, "pa", ", ");
+	lane_field(f, masks, snapshot, COLLECTOR_LANE_DB, "db", ", ");
+	lane_field(f, masks, snapshot, COLLECTOR_LANE_CB, "cb", ", ");
+	lane_field(f, masks, snapshot, COLLECTOR_LANE_CP, "cp", ", ");
+	lane_field(f, masks, snapshot, COLLECTOR_LANE_E2, "e2", ", ");
+	lane_field(f, masks, snapshot, COLLECTOR_LANE_RB2D, "rb2d", ", ");
+	lane_field(f, masks, snapshot, COLLECTOR_LANE_CF, "cf", ", ");
+	lane_field(f, masks, snapshot, COLLECTOR_LANE_UVD, "uvd", ", ");
+	lane_field(f, masks, snapshot, COLLECTOR_LANE_VCE0, "vce0", ", ");
+
+	// VRAM and GTT are point measurements at the window endpoint, so they
+	// carry their own validity rather than the status coverage.
+	if (snapshot->vram_valid && vramsize)
+		fprintf(f, ", vram %.2f%% %.2fmb",
+			100.0 * (double) snapshot->vram / (double) vramsize,
+			(double) snapshot->vram / 1024.0 / 1024.0);
+
+	if (snapshot->gtt_valid && gttsize)
+		fprintf(f, ", gtt %.2f%% %.2fmb",
+			100.0 * (double) snapshot->gtt / (double) gttsize,
+			(double) snapshot->gtt / 1024.0 / 1024.0);
+
+	// The clock figures are means over their own valid readings, not over
+	// the sample slots, so they carry their own denominators below.
+	if (snapshot->sclk.valid && sclk_max)
+		fprintf(f, ", mclk %.2f%% %.3fghz, sclk %.2f%% %.3fghz",
+			100.0 * snapshot->mclk_mean_khz / (double) mclk_max,
+			snapshot->mclk_mean_khz / 1e6,
+			100.0 * snapshot->sclk_mean_khz / (double) sclk_max,
+			snapshot->sclk_mean_khz / 1e6);
+
+	// Coverage travels with every value on the line.  Read failures can
+	// correlate with load, so a duty figure without its denominator and its
+	// missed-slot count cannot be interpreted after the fact.
+	fprintf(f, ", gen %llu, cov %s, valid %llu/%llu, missed %llu, failed %llu",
+		(unsigned long long) snapshot->generation,
+		format_percent(buffer, sizeof(buffer),
+			collector_status_coverage(snapshot)),
+		(unsigned long long) snapshot->status.valid,
+		(unsigned long long) snapshot->nominal_slots,
+		(unsigned long long) snapshot->missed_slots,
+		(unsigned long long) snapshot->status.failed);
+
+	fprintf(f, "\n");
+}
+
+int dumpdata(struct collector *collector, const struct engine_masks *masks,
+		const char file[], const unsigned int limit, const unsigned char bus) {
 
 #ifdef ENABLE_NLS
 	// This is a data format, so disable decimal point localization
 	setlocale(LC_NUMERIC, "C");
 #endif
-
-	// Set up signals to exit gracefully when terminated
-	struct sigaction sig;
-
-	sig.sa_handler = sighandler;
-
-	sigaction(SIGTERM, &sig, NULL);
-	sigaction(SIGINT, &sig, NULL);
 
 	fprintf(stderr, _("Dumping to %s, "), file);
 
@@ -62,10 +152,6 @@ void dumpdata(const unsigned int ticks, const char file[], const unsigned int li
 	if (!f)
 		die(_("Can't open file for writing."));
 
-	// This does not need to be atomic. A delay here is acceptable.
-	while(!results)
-		usleep(16000);
-
 	if (rs480_gart_observed.valid) {
 		fprintf(f,
 			"# bus %02x, rs480 candidate_gart_mc agp_base_2 0x%08x, gart_feature_id 0x%08x, gart_base 0x%08x\n",
@@ -73,128 +159,69 @@ void dumpdata(const unsigned int ticks, const char file[], const unsigned int li
 			rs480_gart_observed.agp_base_2,
 			rs480_gart_observed.gart_feature_id,
 			rs480_gart_observed.gart_base);
-		fflush(f);
 	}
 
-	// Action
-	unsigned int count;
+	uint64_t last_generation = 0;
+	unsigned int printed = 0;
+	int status = 0;
 
-	for (count = limit; !limit || count; count--) {
+	while (!terminate_requested) {
+		struct collector_snapshot snapshot;
+		struct timespec deadline;
 
-		struct timeval t;
-		gettimeofday(&t, NULL);
+		// A bounded wait is what lets the signal flag be observed; the
+		// handler itself may only set a volatile sig_atomic_t.
+		if (clock_gettime(CLOCK_MONOTONIC, &deadline)) {
+			status = 1;
+			break;
+		}
+		deadline.tv_nsec += DUMP_POLL_MS * 1000000L;
+		if (deadline.tv_nsec >= 1000000000L) {
+			deadline.tv_nsec -= 1000000000L;
+			deadline.tv_sec++;
+		}
 
-		fprintf(f, "%llu.%llu: ", (unsigned long long) t.tv_sec,
-				(unsigned long long) t.tv_usec);
+		const int wait = collector_wait_next(collector, last_generation,
+			&deadline, &snapshot);
 
-		fprintf(f, "bus %02x, ", bus);
+		if (wait == COLLECTOR_WAIT_TIMEOUT)
+			continue;
 
-		// Again, no need to protect these. Worst that happens is a slightly
-		// wrong number.
-		float k = 1.0f / ticks / dumpinterval;
-		float ee = 100 * results->ee * k;
-		float vgt = 100 * results->vgt * k;
-		float gui = 100 * results->gui * k;
-		float ta = 100 * results->ta * k;
-		float tc = 100 * results->tc * k;
-		float sx = 100 * results->sx * k;
-		float sh = 100 * results->sh * k;
-		float spi = 100 * results->spi * k;
-		float smx = 100 * results->smx * k;
-		float sc = 100 * results->sc * k;
-		float pa = 100 * results->pa * k;
-		float db = 100 * results->db * k;
-		float cr = 100 * results->cr * k;
-		float cb = 100 * results->cb * k;
-		float uvd = 100 * results->uvd * k;
-		float vce0 = 100 * results->vce0 * k;
-		float cp = 100 * results->cp * k;
-		float e2 = 100 * results->e2 * k;
-		float rb2d = 100 * results->rb2d * k;
-		float cf = 100 * results->cf * k;
-		float vram = 100.0f * results->vram / vramsize;
-		float vrammb = results->vram / 1024.0f / 1024.0f;
-		float gtt = 100.0f * results->gtt / gttsize;
-		float gttmb = results->gtt / 1024.0f / 1024.0f;
-		float mclk = 100.0f * (results->mclk * k) / (mclk_max / 1e3f);
-		float sclk = 100.0f * (results->sclk * k) / (sclk_max / 1e3f);
-		float mclk_ghz = results->mclk * k / 1000.0f;
-		float sclk_ghz = results->sclk * k / 1000.0f;
+		if (wait == COLLECTOR_WAIT_FATAL) {
+			fprintf(stderr, _("The collector lost the device, stopping.\n"));
+			status = 1;
+			break;
+		}
 
-		// A zero mask means the block is absent on this family, or its
-		// exposure on the target remains unconfirmed and the lane stays
-		// unexposed until an observation supports it.  Either way a
-		// perpetual 0.00%% gauge would report a number the evidence does
-		// not carry, so every lane a family can lack is gated on its mask.
-		fprintf(f, "gpu %.2f%%, ", gui);
-		fprintf(f, "ee %.2f%%, ", ee);
-		fprintf(f, "vgt %.2f%%, ", vgt);
-
-		if (bits.ta)
-			fprintf(f, "ta %.2f%%, ", ta);
-
-		if (bits.tc)
-			fprintf(f, "tc %.2f%%, ", tc);
-
-		if (bits.sx)
-			fprintf(f, "sx %.2f%%, ", sx);
-		if (bits.sh)
-			fprintf(f, "sh %.2f%%, ", sh);
-		if (bits.spi)
-			fprintf(f, "spi %.2f%%, ", spi);
-
-		if (bits.smx)
-			fprintf(f, "smx %.2f%%, ", smx);
-
-		if (bits.cr)
-			fprintf(f, "cr %.2f%%, ", cr);
-
-		if (bits.sc)
-			fprintf(f, "sc %.2f%%, ", sc);
-		fprintf(f, "pa %.2f%%", pa);
-		if (bits.db)
-			fprintf(f, ", db %.2f%%", db);
-		if (bits.cb)
-			fprintf(f, ", cb %.2f%%", cb);
-		if (bits.cp)
-			fprintf(f, ", cp %.2f%%", cp);
-		if (bits.e2)
-			fprintf(f, ", e2 %.2f%%", e2);
-		if (bits.rb2d)
-			fprintf(f, ", rb2d %.2f%%", rb2d);
-		if (bits.cf)
-			fprintf(f, ", cf %.2f%%", cf);
-		if (bits.uvd)
-			fprintf(f, ", uvd %.2f%%", uvd);
-		if (bits.vce0)
-			fprintf(f, ", vce0 %.2f%%", vce0);
-
-		if (bits.vram)
-			fprintf(f, ", vram %.2f%% %.2fmb", vram, vrammb);
-
-		if (bits.gtt)
-			fprintf(f, ", gtt %.2f%% %.2fmb", gtt, gttmb);
-
-		if (sclk_max != 0 && sclk > 0)
-			fprintf(f, ", mclk %.2f%% %.3fghz, sclk %.2f%% %.3fghz",
-					mclk, mclk_ghz, sclk, sclk_ghz);
-
-		fprintf(f, "\n");
-		fflush(f);
-
-		// Did we get a termination signal?
-		if (quit)
+		if (wait == COLLECTOR_WAIT_FINISHED)
 			break;
 
-		// No sleeping on the last line.
-		if (!limit || count > 1)
-			sleep(dumpinterval);
+		last_generation = snapshot.generation;
+		dump_line(f, masks, &snapshot, bus);
+
+		// A disk-full or broken-pipe condition makes the capture
+		// incomplete, and a research capture that lost lines is not a
+		// successful run.
+		if (fflush(f) || ferror(f)) {
+			fprintf(stderr, _("Failed writing the dump output.\n"));
+			status = 1;
+			break;
+		}
+
+		printed++;
+		if (limit && printed >= limit)
+			break;
 	}
 
-	fflush(f);
+	if (fflush(f) || ferror(f))
+		status = 1;
 
 	if (f != stdout) {
-		fsync(fileno(f));
-		fclose(f);
+		if (fsync(fileno(f)))
+			status = 1;
+		if (fclose(f))
+			status = 1;
 	}
+
+	return status;
 }

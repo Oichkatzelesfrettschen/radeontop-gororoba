@@ -19,6 +19,31 @@
 #include <getopt.h>
 #include <errno.h>
 #include <limits.h>
+#include <string.h>
+
+// A signal handler may touch only a volatile sig_atomic_t, and both output
+// modes poll this one, so an interrupt reaches the same orderly shutdown that a
+// line limit or a UI quit does: request stop, join, then unmap.
+volatile sig_atomic_t terminate_requested = 0;
+
+static void on_terminate(int signal_number) {
+	(void) signal_number;
+	terminate_requested = 1;
+}
+
+// A partially initialized struct sigaction leaves sa_mask and sa_flags
+// indeterminate, so the handler would run under an unspecified signal mask.
+static void install_terminate_handler(void) {
+	struct sigaction action;
+
+	memset(&action, 0, sizeof(action));
+	action.sa_handler = on_terminate;
+	sigemptyset(&action.sa_mask);
+	action.sa_flags = 0;
+
+	if (sigaction(SIGTERM, &action, NULL) || sigaction(SIGINT, &action, NULL))
+		die(_("Failed to install the termination handlers"));
+}
 
 __attribute__((noreturn)) void die(const char * const why) {
 	fprintf(stderr, "%s\n", why);
@@ -209,14 +234,41 @@ int main(int argc, char **argv) {
 
 	initbits(family);
 
-	// runtime
-	collect(ticks, dumpinterval);
+	// The collector reads through the mapped BAR and the DRM handles that
+	// cleanup() releases, so it is started after the backend exists and
+	// stopped and joined before the backend goes away.  A detached worker
+	// could enter a read while cleanup() unmapped the window under it.
+	struct collector_monotonic_clock clock;
+	if (collector_monotonic_clock_init(&clock))
+		die(_("Failed to initialize the collector clock"));
+
+	const struct collector_config config = { ticks, dumpinterval };
+	const struct collector_backend backend = collector_backend_from_device();
+	const struct engine_masks masks = collector_masks_from_bits();
+	const struct collector_clock clock_ops = collector_monotonic_clock_ops(&clock);
+	struct collector collector;
+
+	if (collector_init(&collector, &config, &backend, &masks, &clock_ops))
+		die(_("Failed to initialize the collector"));
+
+	install_terminate_handler();
+
+	if (collector_start(&collector))
+		die(_("Failed to start the collector thread"));
+
+	int status;
 
 	if (dump)
-		dumpdata(ticks, dump, limit, bus, dumpinterval);
+		status = dumpdata(&collector, &masks, dump, limit, bus);
 	else
-		present(ticks, cardname, color,transparency, bus, dumpinterval);
+		status = present(&collector, &masks, cardname, color, transparency, bus);
+
+	collector_request_stop(&collector);
+	if (collector_join(&collector))
+		status = 1;
+	collector_destroy(&collector);
+	collector_monotonic_clock_destroy(&clock);
 
 	cleanup();
-	return 0;
+	return status;
 }

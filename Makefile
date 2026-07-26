@@ -29,7 +29,8 @@ xcblib = libradeontop_xcb.so
 # file left in the root, so the build surface follows the directory contents
 # rather than the recipe.  amdgpu.c joins below under its own option, and
 # auth_xcb.c builds into the separate xcb shim.
-src = auth.c detect.c dump.c family_str.c radeon.c radeontop.c ticks.c ui.c
+src = auth.c collector.c collector_backend.c detect.c dump.c family_str.c radeon.c \
+      radeontop.c ui.c
 verh = include/version.h
 
 CFLAGS_SECTIONED = -ffunction-sections -fdata-sections
@@ -101,7 +102,7 @@ LIBS += $(shell pkg-config --libs ncursesw 2>/dev/null || \
 		shell pkg-config --libs ncurses 2>/dev/null || \
 		echo "-lncurses")
 
-.PHONY: all clean install man dist FORCE
+.PHONY: all check clean install man dist FORCE
 
 all: $(bin)
 
@@ -117,8 +118,22 @@ $(obj): $(wildcard include/*.h) $(verh)
 $(bin): $(obj)
 	$(CC) -o $(bin) $(obj) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $(LIBS)
 
+# The collector test links against libc and pthread only, so it builds without
+# ncurses, libdrm, and libpciaccess and runs without a GPU.  Its flags are
+# separate from CFLAGS so a sanitizer lane can rebuild it without disturbing the
+# production build.
+tests = tests/collector_test
+TEST_CFLAGS ?= -std=gnu11 -O1 -g -Wall -Wextra -Werror
+
+check: $(tests)
+	./tests/collector_test
+
+tests/collector_test: tests/collector_test.c collector.c include/collector.h
+	$(CC) $(TEST_CFLAGS) $(CPPFLAGS) -Iinclude -pthread \
+		-o $@ tests/collector_test.c collector.c $(TEST_LDFLAGS) -lm
+
 clean:
-	rm -f *.o $(bin) $(xcblib)
+	rm -f *.o $(bin) $(xcblib) $(tests)
 
 # FORCE runs getver.sh on every build so a changed VERSION reaches the header;
 # getver.sh replaces the header on a changed value only, so the objects that

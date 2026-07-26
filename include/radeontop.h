@@ -34,6 +34,8 @@
 #include <locale.h>
 #include <stdint.h>
 
+#include "collector.h"
+
 enum {
 	GRBM_STATUS = 0x8010,
 	// R300-class (RS400/RS480/RS482/RS485) report engine-busy in RBBM_STATUS,
@@ -65,6 +67,12 @@ int getfamily(unsigned int id);
 void initbits(int fam);
 void cleanup();
 
+// The null readers stand for a signal this part does not have.  The backend
+// adapter compares against them to build its capability mask, which is what
+// separates unsupported from supported-but-failed.
+int getuint32_null(uint32_t *out);
+int getuint64_null(uint64_t *out);
+
 extern int (*getgrbm)(uint32_t *out);
 extern int (*getsrbm)(uint32_t *out);
 extern int (*getsrbm2)(uint32_t *out);
@@ -73,16 +81,28 @@ extern int (*getgtt)(uint64_t *out);
 extern int (*getsclk)(uint32_t *out);
 extern int (*getmclk)(uint32_t *out);
 
-// ticks.c
-void collect(unsigned int ticks, unsigned int dumpinterval);
+// collector_backend.c
+struct collector_backend collector_backend_from_device(void);
+struct engine_masks collector_masks_from_bits(void);
 
-extern struct bits_t *results;
+// radeontop.c
+// A signal handler may only touch a volatile sig_atomic_t, and both output
+// modes observe this one so an interrupt reaches the same orderly shutdown that
+// a line limit or a UI quit does.
+extern volatile sig_atomic_t terminate_requested;
 
 // ui.c
-void present(const unsigned int ticks, const char card[], unsigned int color, unsigned int transparency, const unsigned char bus, const unsigned int dumpinterval);
+// Returns the process exit status: nonzero when the collector lost its backend.
+int present(struct collector *collector, const struct engine_masks *masks,
+		const char card[], unsigned int color, unsigned int transparency,
+		const unsigned char bus);
 
 // dump.c
-void dumpdata(const unsigned int ticks, const char file[], const unsigned int limit, const unsigned char bus, const unsigned int dumpinterval);
+// Returns the process exit status: nonzero when the collector lost its backend
+// or the output stream failed, because a truncated capture is not a successful
+// run.
+int dumpdata(struct collector *collector, const struct engine_masks *masks,
+		const char file[], const unsigned int limit, const unsigned char bus);
 
 // chips
 enum radeon_family {
@@ -153,7 +173,9 @@ enum radeon_family {
 
 extern const char * const family_str[];
 
-// bits
+// Register masks only.  A sample, an accumulated count, a point measurement,
+// and a published window each have their own type in collector.h; one structure
+// standing for all four made a mask and a hit count easy to misread.
 struct bits_t {
 	unsigned int ee;
 	unsigned int vgt;
@@ -179,10 +201,6 @@ struct bits_t {
 	unsigned int cf;
 	unsigned int uvd;
 	unsigned int vce0;
-	uint64_t vram;
-	uint64_t gtt;
-	unsigned int sclk;
-	unsigned int mclk;
 };
 
 extern struct bits_t bits;
