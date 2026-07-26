@@ -34,6 +34,8 @@
 #include <locale.h>
 #include <stdint.h>
 
+#include "collector.h"
+
 enum {
 	GRBM_STATUS = 0x8010,
 	// R300-class (RS400/RS480/RS482/RS485) report engine-busy in RBBM_STATUS,
@@ -65,6 +67,12 @@ int getfamily(unsigned int id);
 void initbits(int fam);
 void cleanup();
 
+// The null readers stand for a signal this part does not have.  The backend
+// adapter compares against them to build its capability mask, which is what
+// separates unsupported from supported-but-failed.
+int getuint32_null(uint32_t *out);
+int getuint64_null(uint64_t *out);
+
 extern int (*getgrbm)(uint32_t *out);
 extern int (*getsrbm)(uint32_t *out);
 extern int (*getsrbm2)(uint32_t *out);
@@ -72,6 +80,10 @@ extern int (*getvram)(uint64_t *out);
 extern int (*getgtt)(uint64_t *out);
 extern int (*getsclk)(uint32_t *out);
 extern int (*getmclk)(uint32_t *out);
+
+// collector_backend.c
+struct collector_backend collector_backend_from_device(void);
+struct engine_masks collector_masks_from_bits(void);
 
 // ticks.c
 void collect(unsigned int ticks, unsigned int dumpinterval);

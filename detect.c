@@ -220,7 +220,7 @@ static void cleanup_pci() {
 #ifdef HAS_DRMGETDEVICE
 static void device_info_drm(int fd, short *bus, unsigned int *device_id);
 #endif
-static int getuint64_null(uint64_t *out);
+int getuint64_null(uint64_t *out);
 
 static int init_drm(int drm_fd) {
 	drmVersionPtr ver = drmGetVersion(drm_fd);
@@ -379,8 +379,8 @@ static void device_info_drm(int fd, short *bus, unsigned int *device_id) {
 
 // do-nothing backend used as fallback
 #define UNUSED(v)	(void) v
-static int getuint32_null(uint32_t *out) { UNUSED(out); return -1; }
-static int getuint64_null(uint64_t *out) { UNUSED(out); return -1; }
+int getuint32_null(uint32_t *out) { UNUSED(out); return -1; }
+int getuint64_null(uint64_t *out) { UNUSED(out); return -1; }
 
 void init_pci(const char *path, short *bus, unsigned int *device_id, const unsigned char forcemem) {
 	short device_bus = -1;
