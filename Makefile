@@ -30,7 +30,7 @@ xcblib = libradeontop_xcb.so
 # rather than the recipe.  amdgpu.c joins below under its own option, and
 # auth_xcb.c builds into the separate xcb shim.
 src = auth.c collector.c collector_backend.c detect.c dump.c family_str.c radeon.c \
-      radeontop.c ticks.c ui.c
+      radeontop.c ui.c
 verh = include/version.h
 
 CFLAGS_SECTIONED = -ffunction-sections -fdata-sections

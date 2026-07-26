@@ -438,8 +438,6 @@ void init_pci(const char *path, short *bus, unsigned int *device_id, const unsig
 	if (err)
 		die(_("Can't find Radeon cards"));
 
-	bits.vram = (getvram != getuint64_null);
-	bits.gtt = (getgtt != getuint64_null);
 	*bus = device_bus;
 }
 

@@ -85,16 +85,24 @@ extern int (*getmclk)(uint32_t *out);
 struct collector_backend collector_backend_from_device(void);
 struct engine_masks collector_masks_from_bits(void);
 
-// ticks.c
-void collect(unsigned int ticks, unsigned int dumpinterval);
-
-extern struct bits_t *results;
+// radeontop.c
+// A signal handler may only touch a volatile sig_atomic_t, and both output
+// modes observe this one so an interrupt reaches the same orderly shutdown that
+// a line limit or a UI quit does.
+extern volatile sig_atomic_t terminate_requested;
 
 // ui.c
-void present(const unsigned int ticks, const char card[], unsigned int color, unsigned int transparency, const unsigned char bus, const unsigned int dumpinterval);
+// Returns the process exit status: nonzero when the collector lost its backend.
+int present(struct collector *collector, const struct engine_masks *masks,
+		const char card[], unsigned int color, unsigned int transparency,
+		const unsigned char bus);
 
 // dump.c
-void dumpdata(const unsigned int ticks, const char file[], const unsigned int limit, const unsigned char bus, const unsigned int dumpinterval);
+// Returns the process exit status: nonzero when the collector lost its backend
+// or the output stream failed, because a truncated capture is not a successful
+// run.
+int dumpdata(struct collector *collector, const struct engine_masks *masks,
+		const char file[], const unsigned int limit, const unsigned char bus);
 
 // chips
 enum radeon_family {
@@ -165,7 +173,9 @@ enum radeon_family {
 
 extern const char * const family_str[];
 
-// bits
+// Register masks only.  A sample, an accumulated count, a point measurement,
+// and a published window each have their own type in collector.h; one structure
+// standing for all four made a mask and a hit count easy to misread.
 struct bits_t {
 	unsigned int ee;
 	unsigned int vgt;
@@ -191,10 +201,6 @@ struct bits_t {
 	unsigned int cf;
 	unsigned int uvd;
 	unsigned int vce0;
-	uint64_t vram;
-	uint64_t gtt;
-	unsigned int sclk;
-	unsigned int mclk;
 };
 
 extern struct bits_t bits;
