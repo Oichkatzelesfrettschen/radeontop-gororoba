@@ -7,43 +7,86 @@
 # radeontop ships no PKGBUILD, so this builds the fork's tree directly.
 #
 # Run from this directory: makepkg -si
+#
+# For a byte-identical artifact, pin the build timestamp to the source it
+# builds.  makepkg otherwise stamps the current time into builddate and into
+# every archive member mtime, and two clean builds of the same commit then
+# differ in the package file while every packaged file stays identical:
+#
+#   SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$_commit") makepkg -f
 
 pkgname=radeontop-gororoba
-pkgver=1.4
-# Bump pkgrel on every fork source change (new gauge, read-path fix, etc.) so a
-# rebuilt package is a distinguishable revision and `pacman -Syu`/`-U` treats it
-# as an upgrade.  -5: version identity, option boundaries, and analyzer gates.
-pkgrel=5
+
+# The base version upstream released and the commit its tag names.  pkgver()
+# counts from that object, so the count holds in a clone whose tags differ.
+_basever=1.4
+_basecommit='15521706464b78dc9af60495b648b9d536b4d085'
+
+# The exact source this package builds.  A full object id pins one immutable
+# tree: a branch follows later commits, a tag moves, and copying the working
+# directory ships tracked modifications and untracked files alike.  Advance this
+# to a commit already merged to master, because a squash or rebase merge
+# rewrites the object ids a pull request head carried and can leave a pinned
+# pre-merge object unreachable.
+_commit='22dfcd7e5124bde7a6d876fb8e9a0070bafe016e'
+
+# pkgver identifies the source and pkgrel identifies the packaging.  Changing
+# _commit changes pkgver and resets pkgrel to 1; changing the recipe, the
+# dependencies, the flags, or the installed artifact against an unchanged
+# _commit increments pkgrel.  The literal below equals what pkgver() derives for
+# _commit, and `makepkg --nobuild && git diff --exit-code PKGBUILD` proves it,
+# because makepkg rewrites this line when the two disagree.
+pkgver=1.4.r43.g22dfcd7e5124
+pkgrel=1
+
 pkgdesc="GPU utilization monitor with RS480/RS482 (RS4xx) BAR2 read-path"
 url="https://github.com/Oichkatzelesfrettschen/radeontop-gororoba"
 arch=('x86_64')
-license=('GPL3')
+# The source grants GPL version 3 with no "or later" clause.
+license=('GPL-3.0-only')
 depends=('libpciaccess' 'libdrm' 'ncurses' 'libxcb')
-makedepends=('pkgconf')
-provides=('radeontop')
+# base-devel supplies pkgconf and gettext.  git fetches the pinned source.
+makedepends=('git')
+provides=("radeontop=$pkgver")
 conflicts=('radeontop')
-# The source is this repository.  Copy the tree into the build dir (excluding
-# makepkg's own src/pkg and the VCS dir) so the build stays out of the checkout.
-source=()
-sha512sums=()
 
-prepare() {
-  rm -rf "$srcdir/build"
-  mkdir -p "$srcdir/build"
-  tar -C "$startdir" \
-      --exclude=./src --exclude=./pkg --exclude=./.git \
-      --exclude='./*.pkg.tar*' -cf - . | tar -C "$srcdir/build" -xf -
-  cd "$srcdir/build"
-  make clean >/dev/null 2>&1 || true
+source=("$pkgname::git+$url.git#commit=$_commit")
+# The pinned object id is the integrity check: git verifies the checkout against
+# it, so a content hash over the export restates the same guarantee.
+b2sums=('SKIP')
+
+pkgver() {
+  cd "$srcdir/$pkgname"
+
+  printf '%s.r%s.g%s' \
+    "$_basever" \
+    "$(git rev-list --count "$_basecommit..HEAD")" \
+    "$(git rev-parse --short=12 HEAD)"
 }
 
 build() {
-  cd "$srcdir/build"
-  make PREFIX=/usr
+  cd "$srcdir/$pkgname"
+
+  # VERSION stamps include/version.h, so the binary reports the pinned revision
+  # rather than whichever repository surrounds the build directory.  plain=1
+  # withholds the Makefile's own -s, because makepkg owns stripping and the
+  # debug-symbol split.
+  make PREFIX=/usr plain=1 VERSION="$pkgver"
+}
+
+check() {
+  cd "$srcdir/$pkgname"
+
+  # The binary names the source that produced it.  A mismatch means the stamp
+  # did not reach the build and the package identity is unverifiable.
+  test "$(./radeontop --version)" = "RadeonTop $pkgver"
+
+  ./familycheck.sh
 }
 
 package() {
-  cd "$srcdir/build"
-  make install PREFIX=/usr DESTDIR="$pkgdir"
+  cd "$srcdir/$pkgname"
+
+  make PREFIX=/usr DESTDIR="$pkgdir" plain=1 VERSION="$pkgver" install
   install -Dm644 COPYING "$pkgdir/usr/share/licenses/$pkgname/COPYING"
 }
