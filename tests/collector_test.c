@@ -1,0 +1,1091 @@
+/*
+    Copyright (C) 2012 Lauri Kasanen
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, version 3 of the License.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+// Exercises the collector against a scripted backend and a virtual clock, so
+// the arithmetic, the schedule, the failure semantics, the publication order,
+// and the shutdown path are all observable without a GPU and without waiting on
+// real time.  Only the long-dumpinterval shutdown case binds the real
+// monotonic clock, because interrupting a far-future deadline is exactly what
+// that case proves.
+
+#include "collector.h"
+
+#include <errno.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+static unsigned int checks_run;
+static unsigned int checks_failed;
+static const char *current_case = "";
+
+#define CHECK(condition) check_that((condition), #condition, __LINE__)
+
+static void check_that(int condition, const char *text, int line) {
+	checks_run++;
+	if (condition)
+		return;
+
+	checks_failed++;
+	fprintf(stderr, "FAIL %s:%d  %s\n", current_case, line, text);
+}
+
+static void check_equal_u64(uint64_t got, uint64_t want, const char *what, int line) {
+	checks_run++;
+	if (got == want)
+		return;
+
+	checks_failed++;
+	fprintf(stderr, "FAIL %s:%d  %s: got %llu, want %llu\n", current_case, line,
+		what, (unsigned long long) got, (unsigned long long) want);
+}
+
+#define CHECK_U64(got, want) check_equal_u64((got), (want), #got, __LINE__)
+
+static void check_close(double got, double want, const char *what, int line) {
+	checks_run++;
+	if (fabs(got - want) < 1e-9)
+		return;
+
+	checks_failed++;
+	fprintf(stderr, "FAIL %s:%d  %s: got %.12f, want %.12f\n", current_case, line,
+		what, got, want);
+}
+
+#define CHECK_CLOSE(got, want) check_close((got), (want), #got, __LINE__)
+
+#define NS_PER_SEC 1000000000LL
+
+// The scripted backend.
+
+struct fake_backend {
+	pthread_mutex_t mutex;
+
+	// Set after join.  Every reader asserts against it, so a read that
+	// outlived the join is a failure rather than a silent use-after-free.
+	bool torn_down;
+	bool read_after_teardown;
+
+	uint64_t status_calls;
+	uint64_t uvd_calls;
+	uint64_t vce_calls;
+	uint64_t sclk_calls;
+	uint64_t mclk_calls;
+	uint64_t vram_calls;
+	uint64_t gtt_calls;
+
+	const uint32_t *status_values;
+	size_t status_values_len;
+	const int *status_results;
+	size_t status_results_len;
+
+	const uint32_t *sclk_values;
+	size_t sclk_values_len;
+	const int *sclk_results;
+	size_t sclk_results_len;
+
+	uint32_t uvd_value;
+	uint32_t vce_value;
+	uint32_t mclk_value;
+	uint64_t vram_value;
+	uint64_t gtt_value;
+
+	int uvd_result;
+	int vce_result;
+	int mclk_result;
+	int vram_result;
+	int gtt_result;
+};
+
+// A sequence shorter than the window repeats its last entry, so a test scripts
+// only the prefix it cares about.
+static uint32_t pick_u32(const uint32_t *sequence, size_t length, uint64_t index,
+		uint32_t fallback) {
+	if (!sequence || !length)
+		return fallback;
+
+	return sequence[index < length ? index : length - 1];
+}
+
+static int pick_result(const int *sequence, size_t length, uint64_t index) {
+	if (!sequence || !length)
+		return COLLECTOR_READ_OK;
+
+	return sequence[index < length ? index : length - 1];
+}
+
+static void note_call(struct fake_backend *fake) {
+	if (fake->torn_down)
+		fake->read_after_teardown = true;
+}
+
+static int fake_read_status(void *context, uint32_t *value) {
+	struct fake_backend *fake = context;
+	int result;
+
+	pthread_mutex_lock(&fake->mutex);
+	note_call(fake);
+	*value = pick_u32(fake->status_values, fake->status_values_len,
+		fake->status_calls, 0);
+	result = pick_result(fake->status_results, fake->status_results_len,
+		fake->status_calls);
+	fake->status_calls++;
+	pthread_mutex_unlock(&fake->mutex);
+
+	return result;
+}
+
+static int fake_read_uvd(void *context, uint32_t *value) {
+	struct fake_backend *fake = context;
+	int result;
+
+	pthread_mutex_lock(&fake->mutex);
+	note_call(fake);
+	*value = fake->uvd_value;
+	result = fake->uvd_result;
+	fake->uvd_calls++;
+	pthread_mutex_unlock(&fake->mutex);
+
+	return result;
+}
+
+static int fake_read_vce(void *context, uint32_t *value) {
+	struct fake_backend *fake = context;
+	int result;
+
+	pthread_mutex_lock(&fake->mutex);
+	note_call(fake);
+	*value = fake->vce_value;
+	result = fake->vce_result;
+	fake->vce_calls++;
+	pthread_mutex_unlock(&fake->mutex);
+
+	return result;
+}
+
+static int fake_read_sclk(void *context, uint32_t *value) {
+	struct fake_backend *fake = context;
+	int result;
+
+	pthread_mutex_lock(&fake->mutex);
+	note_call(fake);
+	*value = pick_u32(fake->sclk_values, fake->sclk_values_len,
+		fake->sclk_calls, 0);
+	result = pick_result(fake->sclk_results, fake->sclk_results_len,
+		fake->sclk_calls);
+	fake->sclk_calls++;
+	pthread_mutex_unlock(&fake->mutex);
+
+	return result;
+}
+
+static int fake_read_mclk(void *context, uint32_t *value) {
+	struct fake_backend *fake = context;
+	int result;
+
+	pthread_mutex_lock(&fake->mutex);
+	note_call(fake);
+	*value = fake->mclk_value;
+	result = fake->mclk_result;
+	fake->mclk_calls++;
+	pthread_mutex_unlock(&fake->mutex);
+
+	return result;
+}
+
+static int fake_read_vram(void *context, uint64_t *value) {
+	struct fake_backend *fake = context;
+	int result;
+
+	pthread_mutex_lock(&fake->mutex);
+	note_call(fake);
+	*value = fake->vram_value;
+	result = fake->vram_result;
+	fake->vram_calls++;
+	pthread_mutex_unlock(&fake->mutex);
+
+	return result;
+}
+
+static int fake_read_gtt(void *context, uint64_t *value) {
+	struct fake_backend *fake = context;
+	int result;
+
+	pthread_mutex_lock(&fake->mutex);
+	note_call(fake);
+	*value = fake->gtt_value;
+	result = fake->gtt_result;
+	fake->gtt_calls++;
+	pthread_mutex_unlock(&fake->mutex);
+
+	return result;
+}
+
+static void fake_backend_init(struct fake_backend *fake) {
+	memset(fake, 0, sizeof(*fake));
+	pthread_mutex_init(&fake->mutex, NULL);
+}
+
+static void fake_backend_destroy(struct fake_backend *fake) {
+	pthread_mutex_destroy(&fake->mutex);
+}
+
+static struct collector_backend fake_backend_ops(struct fake_backend *fake,
+		uint32_t capabilities) {
+	struct collector_backend backend;
+
+	memset(&backend, 0, sizeof(backend));
+	backend.context = fake;
+	backend.capabilities = capabilities;
+	backend.read_status = fake_read_status;
+	backend.read_uvd_status = fake_read_uvd;
+	backend.read_vce_status = fake_read_vce;
+	backend.read_sclk = fake_read_sclk;
+	backend.read_mclk = fake_read_mclk;
+	backend.read_vram = fake_read_vram;
+	backend.read_gtt = fake_read_gtt;
+
+	return backend;
+}
+
+// The virtual clock.  wait_until jumps straight to the deadline, so a window of
+// any length completes without waiting.  It also single-steps: the worker may
+// perform one wait per granted credit and parks otherwise, so a test observes an
+// exact number of samples rather than racing a worker that would otherwise spin
+// through thousands of windows before the first assertion ran.
+
+struct fake_clock {
+	pthread_mutex_t mutex;
+	pthread_cond_t cond;
+	struct timespec now;
+	bool wake_pending;
+	bool parked;
+	uint64_t budget;
+
+	const int64_t *extra_delay_ns;
+	size_t extra_delay_len;
+	uint64_t waits;
+};
+
+static void fake_clock_init(struct fake_clock *clock) {
+	memset(clock, 0, sizeof(*clock));
+	pthread_mutex_init(&clock->mutex, NULL);
+	pthread_cond_init(&clock->cond, NULL);
+}
+
+static void fake_clock_destroy(struct fake_clock *clock) {
+	pthread_cond_destroy(&clock->cond);
+	pthread_mutex_destroy(&clock->mutex);
+}
+
+static void advance(struct timespec *ts, int64_t ns) {
+	ts->tv_sec += (time_t) (ns / NS_PER_SEC);
+	ts->tv_nsec += (long) (ns % NS_PER_SEC);
+	if (ts->tv_nsec >= NS_PER_SEC) {
+		ts->tv_nsec -= NS_PER_SEC;
+		ts->tv_sec++;
+	}
+}
+
+static int fake_now(void *context, struct timespec *ts) {
+	struct fake_clock *clock = context;
+
+	pthread_mutex_lock(&clock->mutex);
+	*ts = clock->now;
+	pthread_mutex_unlock(&clock->mutex);
+
+	return 0;
+}
+
+static int fake_wait_until(void *context, const struct timespec *deadline) {
+	struct fake_clock *clock = context;
+
+	pthread_mutex_lock(&clock->mutex);
+
+	clock->parked = true;
+	pthread_cond_broadcast(&clock->cond);
+
+	while (!clock->budget && !clock->wake_pending)
+		pthread_cond_wait(&clock->cond, &clock->mutex);
+
+	clock->parked = false;
+
+	if (clock->wake_pending) {
+		clock->wake_pending = false;
+		pthread_cond_broadcast(&clock->cond);
+		pthread_mutex_unlock(&clock->mutex);
+		return 0;
+	}
+
+	clock->budget--;
+
+	if (collector_timespec_delta_ns(&clock->now, deadline) > 0)
+		clock->now = *deadline;
+
+	// A scripted extra delay reproduces a wake-up that arrives after several
+	// slot deadlines have already passed.
+	if (clock->extra_delay_ns && clock->waits < clock->extra_delay_len)
+		advance(&clock->now, clock->extra_delay_ns[clock->waits]);
+
+	clock->waits++;
+	pthread_cond_broadcast(&clock->cond);
+	pthread_mutex_unlock(&clock->mutex);
+
+	return 0;
+}
+
+static void fake_wake(void *context) {
+	struct fake_clock *clock = context;
+
+	pthread_mutex_lock(&clock->mutex);
+	clock->wake_pending = true;
+	pthread_cond_broadcast(&clock->cond);
+	pthread_mutex_unlock(&clock->mutex);
+}
+
+// Grants one wait and returns once the worker has consumed it and parked again,
+// so the sample and any publication it triggered are complete.  Returns false
+// when the worker stopped parking, which is what a fatal exit looks like.
+static bool fake_clock_step(struct fake_clock *clock) {
+	struct timespec limit;
+	bool stepped = true;
+
+	clock_gettime(CLOCK_REALTIME, &limit);
+	limit.tv_sec += 5;
+
+	pthread_mutex_lock(&clock->mutex);
+	clock->budget++;
+	pthread_cond_broadcast(&clock->cond);
+
+	while (clock->budget || !clock->parked) {
+		if (pthread_cond_timedwait(&clock->cond, &clock->mutex, &limit) == ETIMEDOUT) {
+			stepped = false;
+			break;
+		}
+	}
+
+	pthread_mutex_unlock(&clock->mutex);
+	return stepped;
+}
+
+static struct collector_clock fake_clock_ops(struct fake_clock *clock) {
+	struct collector_clock ops;
+
+	ops.context = clock;
+	ops.now = fake_now;
+	ops.wait_until = fake_wait_until;
+	ops.wake = fake_wake;
+
+	return ops;
+}
+
+// Harness.
+
+struct harness {
+	struct fake_backend backend;
+	struct fake_clock clock;
+	struct collector collector;
+	struct engine_masks masks;
+};
+
+static void harness_start(struct harness *harness, uint32_t ticks,
+		uint32_t dumpinterval, uint32_t capabilities) {
+	const struct collector_config config = { ticks, dumpinterval };
+	const struct collector_backend backend =
+		fake_backend_ops(&harness->backend, capabilities);
+	const struct collector_clock clock = fake_clock_ops(&harness->clock);
+
+	CHECK(collector_init(&harness->collector, &config, &backend,
+		&harness->masks, &clock) == 0);
+	CHECK(collector_start(&harness->collector) == 0);
+}
+
+// Stops and joins.  Marking the backend torn down here is what makes a read
+// that outlived the join observable: production unmaps the BAR at this point.
+static void harness_join(struct harness *harness) {
+	collector_request_stop(&harness->collector);
+	CHECK(collector_join(&harness->collector) == 0);
+
+	pthread_mutex_lock(&harness->backend.mutex);
+	harness->backend.torn_down = true;
+	pthread_mutex_unlock(&harness->backend.mutex);
+}
+
+// The collector's own mutex stays valid until destroy, so a consumer may still
+// query it between the join and the teardown.
+static void harness_stop(struct harness *harness) {
+	harness_join(harness);
+	collector_destroy(&harness->collector);
+}
+
+static void harness_init(struct harness *harness) {
+	memset(harness, 0, sizeof(*harness));
+	fake_backend_init(&harness->backend);
+	fake_clock_init(&harness->clock);
+}
+
+static void harness_destroy(struct harness *harness) {
+	CHECK(harness->backend.read_after_teardown == false);
+	fake_backend_destroy(&harness->backend);
+	fake_clock_destroy(&harness->clock);
+}
+
+// Steps the virtual clock until a generation newer than `after` publishes.  The
+// step count is bounded so a defect stops the run instead of hanging it.
+static int next_snapshot(struct harness *harness, uint64_t after,
+		struct collector_snapshot *out) {
+	const uint64_t limit = 16 * ((uint64_t) harness->collector.config.ticks *
+		harness->collector.config.dumpinterval + 8);
+
+	memset(out, 0, sizeof(*out));
+
+	for (uint64_t step = 0; step < limit; step++) {
+		const bool stepped = fake_clock_step(&harness->clock);
+
+		if (collector_peek(&harness->collector, out)) {
+			if (out->fatal)
+				return COLLECTOR_WAIT_FATAL;
+			if (out->generation > after)
+				return COLLECTOR_WAIT_SNAPSHOT;
+		}
+
+		if (!stepped)
+			return COLLECTOR_WAIT_FINISHED;
+	}
+
+	return COLLECTOR_WAIT_TIMEOUT;
+}
+
+// Cases.
+
+#define GUI_BIT (1u << 31)
+#define CP_BIT  (1u << 16)
+#define RB2D_A  (1u << 18)
+#define RB2D_B  (1u << 27)
+
+static void case_alternating_status(void) {
+	static const uint32_t values[] = { GUI_BIT, 0, GUI_BIT, 0, GUI_BIT,
+		0, GUI_BIT, 0, GUI_BIT, 0 };
+	struct harness harness;
+	struct collector_snapshot snapshot;
+
+	current_case = "alternating_status";
+	harness_init(&harness);
+	harness.masks.lane[COLLECTOR_LANE_GUI] = GUI_BIT;
+	harness.backend.status_values = values;
+	harness.backend.status_values_len = sizeof(values) / sizeof(values[0]);
+
+	harness_start(&harness, 10, 1, COLLECTOR_CAP_STATUS);
+	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_SNAPSHOT);
+
+	CHECK_U64(snapshot.nominal_slots, 10);
+	CHECK_U64(snapshot.status.valid, 10);
+	CHECK_U64(snapshot.status.failed, 0);
+	CHECK_U64(snapshot.lane_busy[COLLECTOR_LANE_GUI], 5);
+	CHECK_CLOSE(collector_lane_fraction(&snapshot, COLLECTOR_LANE_GUI), 0.5);
+	CHECK_CLOSE(collector_status_coverage(&snapshot), 1.0);
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+static void case_failed_status_between_valid(void) {
+	static const uint32_t values[] = { GUI_BIT };
+	static const int results[] = { COLLECTOR_READ_OK, COLLECTOR_READ_OK,
+		COLLECTOR_READ_OK, COLLECTOR_READ_OK, COLLECTOR_READ_OK,
+		COLLECTOR_READ_TRANSIENT, COLLECTOR_READ_OK, COLLECTOR_READ_OK,
+		COLLECTOR_READ_OK, COLLECTOR_READ_OK };
+	struct harness harness;
+	struct collector_snapshot snapshot;
+
+	current_case = "failed_status_between_valid";
+	harness_init(&harness);
+	harness.masks.lane[COLLECTOR_LANE_GUI] = GUI_BIT;
+	harness.backend.status_values = values;
+	harness.backend.status_values_len = 1;
+	harness.backend.status_results = results;
+	harness.backend.status_results_len = sizeof(results) / sizeof(results[0]);
+
+	harness_start(&harness, 10, 1, COLLECTOR_CAP_STATUS);
+	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_SNAPSHOT);
+
+	// The failed read validates no lane, so it enters neither the numerator
+	// nor the denominator, and the duty stays 100 percent rather than
+	// dropping to 9/10 as a nominal-slot denominator would give.
+	CHECK_U64(snapshot.status.valid, 9);
+	CHECK_U64(snapshot.status.failed, 1);
+	CHECK_U64(snapshot.lane_busy[COLLECTOR_LANE_GUI], 9);
+	CHECK_CLOSE(collector_lane_fraction(&snapshot, COLLECTOR_LANE_GUI), 1.0);
+	CHECK_CLOSE(collector_status_coverage(&snapshot), 0.9);
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+static void case_rb2d_union(void) {
+	// Only the second bit of the pair is set; the union mask must still
+	// count the lane busy.
+	static const uint32_t values[] = { RB2D_B };
+	struct harness harness;
+	struct collector_snapshot snapshot;
+
+	current_case = "rb2d_union";
+	harness_init(&harness);
+	harness.masks.lane[COLLECTOR_LANE_RB2D] = RB2D_A | RB2D_B;
+	harness.backend.status_values = values;
+	harness.backend.status_values_len = 1;
+
+	harness_start(&harness, 4, 1, COLLECTOR_CAP_STATUS);
+	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_SNAPSHOT);
+
+	CHECK_U64(snapshot.lane_busy[COLLECTOR_LANE_RB2D], 4);
+	CHECK_CLOSE(collector_lane_fraction(&snapshot, COLLECTOR_LANE_RB2D), 1.0);
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+static void case_absent_uvd(void) {
+	struct harness harness;
+	struct collector_snapshot snapshot;
+
+	current_case = "absent_uvd";
+	harness_init(&harness);
+	harness.masks.lane[COLLECTOR_LANE_GUI] = GUI_BIT;
+
+	harness_start(&harness, 4, 1, COLLECTOR_CAP_STATUS);
+	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_SNAPSHOT);
+
+	// An unsupported signal produces neither a successful nor a failed read,
+	// which is what separates it from one that is present and broken.
+	CHECK_U64(snapshot.uvd.valid, 0);
+	CHECK_U64(snapshot.uvd.failed, 0);
+	CHECK(isnan(collector_lane_fraction(&snapshot, COLLECTOR_LANE_UVD)));
+	CHECK((snapshot.capabilities & COLLECTOR_CAP_UVD) == 0);
+
+	pthread_mutex_lock(&harness.backend.mutex);
+	CHECK_U64(harness.backend.uvd_calls, 0);
+	pthread_mutex_unlock(&harness.backend.mutex);
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+static void case_failed_uvd(void) {
+	struct harness harness;
+	struct collector_snapshot snapshot;
+
+	current_case = "failed_uvd";
+	harness_init(&harness);
+	harness.masks.lane[COLLECTOR_LANE_GUI] = GUI_BIT;
+	harness.masks.lane[COLLECTOR_LANE_UVD] = (1u << 19);
+	harness.backend.uvd_result = COLLECTOR_READ_TRANSIENT;
+
+	harness_start(&harness, 4, 1, COLLECTOR_CAP_STATUS | COLLECTOR_CAP_UVD);
+	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_SNAPSHOT);
+
+	// UVD failing does not touch the status lanes, because the two come from
+	// separate reads with separate validity.
+	CHECK_U64(snapshot.uvd.valid, 0);
+	CHECK_U64(snapshot.uvd.failed, 4);
+	CHECK_U64(snapshot.status.valid, 4);
+	CHECK(isnan(collector_lane_fraction(&snapshot, COLLECTOR_LANE_UVD)));
+	CHECK(!isnan(collector_lane_fraction(&snapshot, COLLECTOR_LANE_GUI)));
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+static void case_failed_clock_no_stale_reuse(void) {
+	static const uint32_t values[] = { 100, 200, 999, 999 };
+	static const int results[] = { COLLECTOR_READ_OK, COLLECTOR_READ_OK,
+		COLLECTOR_READ_TRANSIENT, COLLECTOR_READ_TRANSIENT };
+	struct harness harness;
+	struct collector_snapshot snapshot;
+
+	current_case = "failed_clock_no_stale_reuse";
+	harness_init(&harness);
+	harness.masks.lane[COLLECTOR_LANE_GUI] = GUI_BIT;
+	harness.backend.sclk_values = values;
+	harness.backend.sclk_values_len = 4;
+	harness.backend.sclk_results = results;
+	harness.backend.sclk_results_len = 4;
+
+	harness_start(&harness, 4, 1, COLLECTOR_CAP_STATUS | COLLECTOR_CAP_SCLK);
+	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_SNAPSHOT);
+
+	// The mean is over the two readings that succeeded.  Carrying the last
+	// good value forward would give 350, and dividing by four would give 75.
+	CHECK_U64(snapshot.sclk.valid, 2);
+	CHECK_U64(snapshot.sclk.failed, 2);
+	CHECK_CLOSE(snapshot.sclk_mean_khz, 150.0);
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+static void case_zero_valid_status(void) {
+	static const int results[] = { COLLECTOR_READ_TRANSIENT };
+	struct harness harness;
+	struct collector_snapshot snapshot;
+
+	current_case = "zero_valid_status";
+	harness_init(&harness);
+	harness.masks.lane[COLLECTOR_LANE_GUI] = GUI_BIT;
+	harness.backend.status_results = results;
+	harness.backend.status_results_len = 1;
+
+	harness_start(&harness, 8, 1, COLLECTOR_CAP_STATUS);
+	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_SNAPSHOT);
+
+	// A window with no valid read renders N/A.  Returning 0.0 here would be
+	// indistinguishable from a confirmed-idle GPU.
+	CHECK_U64(snapshot.status.valid, 0);
+	CHECK_U64(snapshot.status.failed, 8);
+	CHECK(isnan(collector_lane_fraction(&snapshot, COLLECTOR_LANE_GUI)));
+	CHECK_CLOSE(collector_status_coverage(&snapshot), 0.0);
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+static void case_endpoint_validity(void) {
+	struct harness harness;
+	struct collector_snapshot snapshot;
+
+	current_case = "endpoint_validity";
+	harness_init(&harness);
+	harness.masks.lane[COLLECTOR_LANE_GUI] = GUI_BIT;
+	harness.backend.vram_value = 4096;
+	harness.backend.vram_result = COLLECTOR_READ_OK;
+	harness.backend.gtt_result = COLLECTOR_READ_TRANSIENT;
+
+	harness_start(&harness, 5, 1,
+		COLLECTOR_CAP_STATUS | COLLECTOR_CAP_VRAM | COLLECTOR_CAP_GTT);
+	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_SNAPSHOT);
+
+	CHECK(snapshot.vram_valid);
+	CHECK_U64(snapshot.vram, 4096);
+	CHECK(!snapshot.gtt_valid);
+
+	// Endpoint measurements are read once per window, not once per slot.
+	pthread_mutex_lock(&harness.backend.mutex);
+	CHECK_U64(harness.backend.vram_calls, 1);
+	CHECK_U64(harness.backend.status_calls, 5);
+	pthread_mutex_unlock(&harness.backend.mutex);
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+static void case_on_time_window(void) {
+	struct harness harness;
+	struct collector_snapshot snapshot;
+
+	current_case = "on_time_window";
+	harness_init(&harness);
+	harness.masks.lane[COLLECTOR_LANE_GUI] = GUI_BIT;
+
+	harness_start(&harness, 10, 1, COLLECTOR_CAP_STATUS);
+	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_SNAPSHOT);
+
+	CHECK_U64(snapshot.attempted_slots, 10);
+	CHECK_U64(snapshot.missed_slots, 0);
+	CHECK_U64(snapshot.late_wakeups, 0);
+	CHECK_U64((uint64_t) collector_timespec_delta_ns(&snapshot.window_start,
+		&snapshot.window_end), (uint64_t) NS_PER_SEC);
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+static void case_fractional_period(void) {
+	struct harness harness;
+	struct collector_snapshot first, second;
+
+	current_case = "fractional_period";
+	harness_init(&harness);
+	harness.masks.lane[COLLECTOR_LANE_GUI] = GUI_BIT;
+
+	// 1e9 / 120 is not an integer.  Carrying the remainder is what keeps 120
+	// slots landing on exactly one second; adding a truncated 8333333 ns
+	// would fall 40 microseconds short every window and drift without bound.
+	harness_start(&harness, 120, 1, COLLECTOR_CAP_STATUS);
+	CHECK(next_snapshot(&harness, 0, &first) == COLLECTOR_WAIT_SNAPSHOT);
+	CHECK(next_snapshot(&harness, first.generation, &second) == COLLECTOR_WAIT_SNAPSHOT);
+
+	CHECK_U64(first.nominal_slots, 120);
+	CHECK_U64(first.attempted_slots, 120);
+	CHECK_U64(first.missed_slots, 0);
+	CHECK_U64((uint64_t) collector_timespec_delta_ns(&first.window_start,
+		&first.window_end), (uint64_t) NS_PER_SEC);
+	CHECK_U64((uint64_t) collector_timespec_delta_ns(&first.window_start,
+		&second.window_end), (uint64_t) (2 * NS_PER_SEC));
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+static void case_late_wakeup_no_catchup(void) {
+	// One wake-up arrives three and a half slot periods late.
+	static const int64_t extra[] = { 0, 0, 350000000LL };
+	struct harness harness;
+	struct collector_snapshot snapshot;
+
+	current_case = "late_wakeup_no_catchup";
+	harness_init(&harness);
+	harness.masks.lane[COLLECTOR_LANE_GUI] = GUI_BIT;
+	harness.clock.extra_delay_ns = extra;
+	harness.clock.extra_delay_len = sizeof(extra) / sizeof(extra[0]);
+
+	harness_start(&harness, 10, 1, COLLECTOR_CAP_STATUS);
+	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_SNAPSHOT);
+
+	// The stall is absorbed by skipping slots, never by firing a burst of
+	// catch-up reads.  Attempted plus missed still accounts for every
+	// nominal slot, and the backend saw exactly the attempted count.
+	CHECK(snapshot.missed_slots >= 3);
+	CHECK(snapshot.late_wakeups >= 1);
+	CHECK(snapshot.max_lateness_ns >= 350000000ULL);
+	CHECK_U64(snapshot.attempted_slots + snapshot.missed_slots,
+		snapshot.nominal_slots);
+
+	pthread_mutex_lock(&harness.backend.mutex);
+	CHECK_U64(harness.backend.status_calls, snapshot.attempted_slots);
+	pthread_mutex_unlock(&harness.backend.mutex);
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+static void case_stall_crosses_window_boundary(void) {
+	// A stall longer than a whole report window.
+	static const int64_t extra[] = { 0, 2500000000LL };
+	struct harness harness;
+	struct collector_snapshot snapshot;
+
+	current_case = "stall_crosses_window_boundary";
+	harness_init(&harness);
+	harness.masks.lane[COLLECTOR_LANE_GUI] = GUI_BIT;
+	harness.clock.extra_delay_ns = extra;
+	harness.clock.extra_delay_len = sizeof(extra) / sizeof(extra[0]);
+
+	harness_start(&harness, 10, 1, COLLECTOR_CAP_STATUS);
+	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_SNAPSHOT);
+
+	// The window still publishes, and it accounts for every nominal slot
+	// rather than silently shortening its denominator.
+	CHECK_U64(snapshot.attempted_slots + snapshot.missed_slots,
+		snapshot.nominal_slots);
+	CHECK(snapshot.missed_slots > 0);
+	CHECK(collector_status_coverage(&snapshot) < 1.0);
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+static void case_generations_monotonic(void) {
+	struct harness harness;
+	struct collector_snapshot snapshot;
+	uint64_t last = 0;
+
+	current_case = "generations_monotonic";
+	harness_init(&harness);
+	harness.masks.lane[COLLECTOR_LANE_GUI] = GUI_BIT;
+
+	harness_start(&harness, 4, 1, COLLECTOR_CAP_STATUS);
+
+	for (int i = 0; i < 25; i++) {
+		CHECK(next_snapshot(&harness, last, &snapshot) == COLLECTOR_WAIT_SNAPSHOT);
+
+		// wait_next never returns a generation already seen, so a
+		// consumer counting lines counts completed windows.
+		CHECK(snapshot.generation > last);
+
+		// Internal consistency proves the copy was not torn: these
+		// identities hold within one window and would not survive a
+		// mixture of two.
+		CHECK_U64(snapshot.attempted_slots + snapshot.missed_slots,
+			snapshot.nominal_slots);
+		CHECK_U64(snapshot.status.valid + snapshot.status.failed,
+			snapshot.attempted_slots);
+
+		last = snapshot.generation;
+	}
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+static void case_old_copy_survives(void) {
+	struct harness harness;
+	struct collector_snapshot held, latest, again;
+
+	current_case = "old_copy_survives";
+	harness_init(&harness);
+	harness.masks.lane[COLLECTOR_LANE_GUI] = GUI_BIT;
+
+	harness_start(&harness, 4, 1, COLLECTOR_CAP_STATUS);
+	CHECK(next_snapshot(&harness, 0, &held) == COLLECTOR_WAIT_SNAPSHOT);
+
+	again = held;
+
+	// Publication replaces a whole value under the mutex, so a reader's
+	// private copy cannot be rewritten two generations later the way a
+	// reused double buffer behind a swapped pointer would be.
+	for (int i = 0; i < 200; i++)
+		CHECK(next_snapshot(&harness, 0, &latest) == COLLECTOR_WAIT_SNAPSHOT);
+
+	CHECK(memcmp(&held, &again, sizeof(held)) == 0);
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+static void case_fatal_before_first_generation(void) {
+	static const int results[] = { COLLECTOR_READ_FATAL };
+	struct harness harness;
+	struct collector_snapshot snapshot;
+
+	current_case = "fatal_before_first_generation";
+	harness_init(&harness);
+	harness.masks.lane[COLLECTOR_LANE_GUI] = GUI_BIT;
+	harness.backend.status_results = results;
+	harness.backend.status_results_len = 1;
+
+	harness_start(&harness, 10, 1, COLLECTOR_CAP_STATUS);
+
+	// A consumer must never spin forever waiting for a first generation that
+	// will not arrive, so the fatal state itself ends the wait.
+	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_FATAL);
+	CHECK(snapshot.fatal);
+	CHECK_U64(snapshot.generation, 0);
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+static void case_stop_while_waiting(void) {
+	struct harness harness;
+	struct collector_snapshot snapshot;
+
+	current_case = "stop_while_waiting";
+	harness_init(&harness);
+	harness.masks.lane[COLLECTOR_LANE_GUI] = GUI_BIT;
+
+	harness_start(&harness, 4, 1, COLLECTOR_CAP_STATUS);
+	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_SNAPSHOT);
+
+	// The worker is parked in wait_until with no credit, so only the wake
+	// path can end it; a relative sleep could not be interrupted at all.
+	harness_join(&harness);
+
+	// A consumer that asks after the worker exited is told so rather than
+	// waiting for a generation that will never publish.
+	CHECK(collector_wait_next(&harness.collector, snapshot.generation, NULL,
+		&snapshot) == COLLECTOR_WAIT_FINISHED);
+
+	collector_destroy(&harness.collector);
+	harness_destroy(&harness);
+}
+
+struct reader_args {
+	struct harness *harness;
+	uint64_t seen;
+	int failures;
+	bool done;
+};
+
+#define READER_TARGET 50
+
+static void *reader_thread(void *argument) {
+	struct reader_args *args = argument;
+	struct collector_snapshot snapshot;
+	uint64_t last = 0;
+
+	while (last < READER_TARGET) {
+		if (collector_wait_next(&args->harness->collector, last, NULL,
+				&snapshot) != COLLECTOR_WAIT_SNAPSHOT) {
+			args->failures++;
+			break;
+		}
+
+		// A snapshot copied under the mutex is internally consistent.
+		// These identities hold within one window and would not survive
+		// a mixture of two.
+		if (snapshot.generation <= last ||
+			snapshot.attempted_slots + snapshot.missed_slots !=
+			snapshot.nominal_slots ||
+			snapshot.status.valid + snapshot.status.failed !=
+			snapshot.attempted_slots)
+			args->failures++;
+
+		last = snapshot.generation;
+		args->seen++;
+	}
+
+	__atomic_store_n(&args->done, true, __ATOMIC_RELEASE);
+	return NULL;
+}
+
+static void case_multiple_readers(void) {
+	struct harness harness;
+	struct reader_args first, second;
+	pthread_t a, b;
+
+	current_case = "multiple_readers";
+	harness_init(&harness);
+	harness.masks.lane[COLLECTOR_LANE_GUI] = GUI_BIT;
+
+	harness_start(&harness, 4, 1, COLLECTOR_CAP_STATUS);
+
+	memset(&first, 0, sizeof(first));
+	memset(&second, 0, sizeof(second));
+	first.harness = &harness;
+	second.harness = &harness;
+
+	CHECK(pthread_create(&a, NULL, reader_thread, &first) == 0);
+	CHECK(pthread_create(&b, NULL, reader_thread, &second) == 0);
+
+	// The main thread drives the clock while both readers consume the same
+	// published stream.
+	for (int step = 0; step < 4 * (READER_TARGET + 4); step++) {
+		if (__atomic_load_n(&first.done, __ATOMIC_ACQUIRE) &&
+			__atomic_load_n(&second.done, __ATOMIC_ACQUIRE))
+			break;
+		fake_clock_step(&harness.clock);
+	}
+
+	pthread_join(a, NULL);
+	pthread_join(b, NULL);
+
+	CHECK(first.failures == 0);
+	CHECK(second.failures == 0);
+	CHECK(first.seen > 0);
+	CHECK(second.seen > 0);
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+// The one case that binds the real monotonic clock: a collector waiting on a
+// deadline an hour away must still stop promptly, which is what the clock's
+// wake path exists for.  A relative sleep of that length could not be
+// interrupted at all.
+static void case_long_interval_prompt_shutdown(void) {
+	struct fake_backend backend;
+	struct collector_monotonic_clock clock;
+	struct collector collector;
+	struct engine_masks masks;
+	struct timespec before, after;
+	const struct collector_config config = { 1, 3600 };
+
+	current_case = "long_interval_prompt_shutdown";
+	fake_backend_init(&backend);
+	memset(&masks, 0, sizeof(masks));
+	masks.lane[COLLECTOR_LANE_GUI] = GUI_BIT;
+
+	CHECK(collector_monotonic_clock_init(&clock) == 0);
+
+	{
+		const struct collector_backend ops =
+			fake_backend_ops(&backend, COLLECTOR_CAP_STATUS);
+		const struct collector_clock clock_ops =
+			collector_monotonic_clock_ops(&clock);
+
+		CHECK(collector_init(&collector, &config, &ops, &masks, &clock_ops) == 0);
+	}
+
+	CHECK(collector_start(&collector) == 0);
+
+	clock_gettime(CLOCK_MONOTONIC, &before);
+	collector_request_stop(&collector);
+	CHECK(collector_join(&collector) == 0);
+	clock_gettime(CLOCK_MONOTONIC, &after);
+
+	CHECK(collector_timespec_delta_ns(&before, &after) < 2 * NS_PER_SEC);
+
+	pthread_mutex_lock(&backend.mutex);
+	backend.torn_down = true;
+	pthread_mutex_unlock(&backend.mutex);
+
+	collector_destroy(&collector);
+	collector_monotonic_clock_destroy(&clock);
+	CHECK(backend.read_after_teardown == false);
+	fake_backend_destroy(&backend);
+}
+
+static void case_rejects_impossible_configuration(void) {
+	struct fake_backend backend;
+	struct fake_clock clock;
+	struct collector collector;
+	struct engine_masks masks;
+	struct collector_config config;
+
+	current_case = "rejects_impossible_configuration";
+	fake_backend_init(&backend);
+	fake_clock_init(&clock);
+	memset(&masks, 0, sizeof(masks));
+
+	{
+		const struct collector_backend ops =
+			fake_backend_ops(&backend, COLLECTOR_CAP_STATUS);
+		const struct collector_clock clock_ops = fake_clock_ops(&clock);
+
+		config.ticks = 0;
+		config.dumpinterval = 1;
+		CHECK(collector_init(&collector, &config, &ops, &masks, &clock_ops) != 0);
+
+		config.ticks = 1;
+		config.dumpinterval = 0;
+		CHECK(collector_init(&collector, &config, &ops, &masks, &clock_ops) != 0);
+
+		// The slot count is the loop bound and the coverage denominator.
+		config.ticks = 1000000;
+		config.dumpinterval = 86400;
+		CHECK(collector_init(&collector, &config, &ops, &masks, &clock_ops) != 0);
+	}
+
+	fake_clock_destroy(&clock);
+	fake_backend_destroy(&backend);
+}
+
+int main(void) {
+	case_alternating_status();
+	case_failed_status_between_valid();
+	case_rb2d_union();
+	case_absent_uvd();
+	case_failed_uvd();
+	case_failed_clock_no_stale_reuse();
+	case_zero_valid_status();
+	case_endpoint_validity();
+	case_on_time_window();
+	case_fractional_period();
+	case_late_wakeup_no_catchup();
+	case_stall_crosses_window_boundary();
+	case_generations_monotonic();
+	case_old_copy_survives();
+	case_fatal_before_first_generation();
+	case_stop_while_waiting();
+	case_multiple_readers();
+	case_long_interval_prompt_shutdown();
+	case_rejects_impossible_configuration();
+
+	printf("collector: %u checks, %u failed\n", checks_run, checks_failed);
+
+	return checks_failed ? 1 : 0;
+}

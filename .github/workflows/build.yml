@@ -104,6 +104,51 @@ jobs:
       - name: family enum tables
         run: ./familycheck.sh
 
+  collector:
+    name: collector integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install analysis dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clang
+
+      # The collector test needs no GPU, no ncurses, no libdrm, and no
+      # libpciaccess: the backend and the clock are injected, so the arithmetic,
+      # the schedule, the failure semantics, and the shutdown path are all
+      # observable from a scripted fake and a virtual clock.
+      - name: Unit tests, gcc
+        run: make check
+
+      - name: Unit tests, clang
+        run: |
+          make clean
+          make check CC=clang
+
+      - name: Address, undefined behavior, and leak sanitizers
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: |
+          make clean
+          make check CC=clang \
+            TEST_CFLAGS="-std=gnu11 -O1 -g -Wall -Wextra -Werror -fno-omit-frame-pointer -fsanitize=address,undefined" \
+            TEST_LDFLAGS="-fsanitize=address,undefined"
+
+      # The publication path is the reason this lane exists: readers copy whole
+      # snapshots under a mutex, and the worker must stop and join before
+      # anything it reads from is torn down.
+      - name: ThreadSanitizer
+        env:
+          TSAN_OPTIONS: halt_on_error=1
+        run: |
+          make clean
+          make check CC=clang \
+            TEST_CFLAGS="-std=gnu11 -O1 -g -Wall -Wextra -Werror -fsanitize=thread" \
+            TEST_LDFLAGS="-fsanitize=thread"
+
   cli:
     name: command-line contracts
     runs-on: ubuntu-latest
