@@ -28,7 +28,7 @@ _basecommit='15521706464b78dc9af60495b648b9d536b4d085'
 # to a commit already merged to master, because a squash or rebase merge
 # rewrites the object ids a pull request head carried and can leave a pinned
 # pre-merge object unreachable.
-_commit='22dfcd7e5124bde7a6d876fb8e9a0070bafe016e'
+_commit='49d7a7affe1a8b9a8da83733aca4f0c65daefdd0'
 
 # pkgver identifies the source and pkgrel identifies the packaging.  Changing
 # _commit changes pkgver and resets pkgrel to 1; changing the recipe, the
@@ -36,7 +36,7 @@ _commit='22dfcd7e5124bde7a6d876fb8e9a0070bafe016e'
 # _commit increments pkgrel.  The literal below equals what pkgver() derives for
 # _commit, and `makepkg --nobuild && git diff --exit-code PKGBUILD` proves it,
 # because makepkg rewrites this line when the two disagree.
-pkgver=1.4.r43.g22dfcd7e5124
+pkgver=1.4.r53.g49d7a7affe1a
 pkgrel=1
 
 pkgdesc="GPU utilization monitor with RS480/RS482 (RS4xx) BAR2 read-path"
@@ -82,6 +82,12 @@ check() {
   test "$(./radeontop --version)" = "RadeonTop $pkgver"
 
   ./familycheck.sh
+
+  # The collector unit tests run against the pinned source, so the package
+  # attests to the instrument's behavior rather than only to its version string
+  # and its PCI tables.  They need no GPU: the backend and the clock are
+  # injected.
+  make check
 }
 
 package() {
