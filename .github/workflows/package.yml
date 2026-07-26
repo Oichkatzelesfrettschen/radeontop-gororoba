@@ -27,8 +27,14 @@ jobs:
       # git installs before the checkout so the action clones a real repository
       # rather than falling back to a tarball with no history; the pinned-commit
       # reachability check below reads that history.
-      - name: Install packaging tooling
-        run: pacman -Syu --noconfirm --needed git namcap
+      # The runtime dependencies install here rather than through makepkg
+      # --syncdeps, so the recipe's depends array is checked against packages
+      # that already exist rather than resolved as a side effect of the build.
+      - name: Install packaging tooling and dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            git namcap \
+            libpciaccess libdrm ncurses libxcb
 
       - uses: actions/checkout@v4
         with:
