@@ -1,0 +1,129 @@
+# Proves four properties of the Arch package at the commit that produces it:
+# the pinned source is a reachable object on master, the declared pkgver matches
+# what pkgver() derives, the packaged binary names the source it was built from,
+# and two clean builds of the same commit produce byte-identical artifacts.
+#
+# The build runs in an Arch container because makepkg, namcap, and the packaging
+# conventions are Arch's; the source-build matrix in build.yml covers the
+# compiler and option surface on the default runner image.
+
+name: package
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  arch-package:
+    name: arch package
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+    steps:
+      # git installs before the checkout so the action clones a real repository
+      # rather than falling back to a tarball with no history; the pinned-commit
+      # reachability check below reads that history.
+      - name: Install packaging tooling
+        run: pacman -Syu --noconfirm --needed git namcap
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read the recipe pins
+        run: |
+          set -eu
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          _commit=$(sed -n "s/^_commit='\([0-9a-f]*\)'/\1/p" PKGBUILD)
+          pkgver=$(sed -n 's/^pkgver=\(.*\)/\1/p' PKGBUILD)
+          pkgrel=$(sed -n 's/^pkgrel=\(.*\)/\1/p' PKGBUILD)
+          {
+            echo "PINNED_COMMIT=$_commit"
+            echo "DECLARED_PKGVER=$pkgver"
+            echo "DECLARED_PKGREL=$pkgrel"
+          } >> "$GITHUB_ENV"
+
+      # A pin that is not an ancestor of master can become unreachable when the
+      # branch that carried it is deleted, and the recipe then stops building.
+      - name: Source identity
+        run: |
+          set -eu
+          echo "$PINNED_COMMIT" | grep -Eq '^[0-9a-f]{40}$' \
+            || { echo "_commit is not a full object id: $PINNED_COMMIT" >&2; exit 1; }
+          git fetch --quiet origin master
+          git merge-base --is-ancestor "$PINNED_COMMIT" origin/master \
+            || { echo "_commit is not reachable from master" >&2; exit 1; }
+          git cat-file -e "$PINNED_COMMIT^{commit}"
+          echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$PINNED_COMMIT")" >> "$GITHUB_ENV"
+
+      # makepkg refuses to run as root, and the container's default user is root.
+      - name: Create the build user
+        run: |
+          set -eu
+          useradd -m builder
+          printf 'builder ALL=(ALL) NOPASSWD: ALL\n' > /etc/sudoers.d/builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+
+      # makepkg rewrites the literal pkgver= line when pkgver() derives something
+      # else, so an unchanged file is the agreement.
+      - name: Version identity in the recipe
+        run: |
+          set -eu
+          sudo -u builder makepkg --nobuild --noconfirm
+          git diff --exit-code PKGBUILD \
+            || { echo "pkgver() disagrees with the declared pkgver" >&2; exit 1; }
+
+      - name: Build the package
+        run: |
+          sudo -u builder env SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
+            makepkg --noconfirm --force
+
+      # The binary must name the source that produced it, which is the link a
+      # pinned recipe exists to establish.
+      - name: Version identity in the binary
+        run: |
+          set -eu
+          mkdir -p extract
+          bsdtar xf ./*.pkg.tar.zst -C extract usr/bin/radeontop
+          got=$(./extract/usr/bin/radeontop --version)
+          want="RadeonTop $DECLARED_PKGVER"
+          test "$got" = "$want" || { echo "binary says '$got', recipe says '$want'" >&2; exit 1; }
+          bsdtar xOf ./*.pkg.tar.zst .PKGINFO | grep -x "pkgver = $DECLARED_PKGVER-$DECLARED_PKGREL"
+
+      # namcap exits 0 on warnings, so the gate reads its output.  An E: line
+      # fails the job and a W: line is printed for the pull request to explain.
+      - name: namcap
+        run: |
+          set -eu
+          namcap PKGBUILD | tee namcap-recipe.txt
+          namcap ./*.pkg.tar.zst | tee namcap-package.txt
+          ! grep -q '\bE:' namcap-recipe.txt namcap-package.txt
+
+      # makepkg stamps the current time into builddate and every archive member
+      # mtime, so a pinned SOURCE_DATE_EPOCH is what makes two clean builds of
+      # one commit comparable.  This proves build-to-build determinism on one
+      # host; makerepropkg, which rebuilds against the .BUILDINFO package set
+      # from the Arch Linux Archive, is the stronger check and is not run here.
+      - name: Byte-identical rebuild
+        run: |
+          set -eu
+          # The reference copy carries no .pkg.tar.zst suffix, so the glob that
+          # names the second build cannot match it.
+          cp ./*.pkg.tar.zst reference-build
+          sudo -u builder env SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
+            makepkg --noconfirm --force --cleanbuild
+          cmp reference-build ./*.pkg.tar.zst \
+            || { echo "two clean builds of one commit differ" >&2; exit 1; }
+          sha256sum reference-build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arch-package
+          path: |
+            *.pkg.tar.zst
+            namcap-recipe.txt
+            namcap-package.txt

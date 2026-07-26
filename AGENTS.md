@@ -107,11 +107,17 @@ the nearest principle.
   conflict-marker stripping are selection, not synthesis.
 - A force-push to `master` carries explicit user sign-off and a commit message
   explaining why.
-- Every fork source change bumps `pkgrel` in `PKGBUILD` so a rebuilt package is
-  a distinguishable revision and `pacman -Syu` treats it as an upgrade. A change
-  that leaves the packaged artifact identical, such as an instruction or
-  documentation file outside the package, leaves `pkgrel` alone and says so in
-  the commit body.
+- `PKGBUILD` pins one merged source commit in `_commit`, and `pkgver` derives
+  from it as `1.4.rN.g<abbrev-object-id>`. Advancing the pin changes `pkgver`
+  and resets `pkgrel` to 1. Changing the recipe, the dependencies, the flags, or
+  the installed artifact against an unchanged pin increments `pkgrel`. A change
+  outside the packaged source, such as an instruction or documentation file,
+  moves neither and says so in the commit body.
+- The pinned commit is reachable from `master` before it enters the recipe. A
+  squash or rebase merge rewrites the object ids a pull request head carried,
+  and deleting that branch can leave a pre-merge pin unreachable.
+- The binary's `VERSION` identifies source. `pkgrel` identifies packaging and
+  stays out of the binary version string.
 
 ### AI disclosure, authorship, and copyright
 
@@ -243,9 +249,17 @@ Xorg access, default on), `amdgpu` (auto by `libdrm_amdgpu` presence), `debug`,
 `nostrip`, and `plain`. The build carries `-Wall -Wextra`; touched code adds no
 warnings.
 
-Package with `makepkg -si` from the repository root. `PKGBUILD` copies the tree
-out of the checkout so the build stays clean, and `pkgrel` records the fork
-revision.
+Package with `makepkg -si` from the repository root. `PKGBUILD` fetches the
+commit its `_commit` pin names, so the package builds one immutable tree rather
+than the working directory, and `make VERSION="$pkgver"` stamps that revision
+into the binary. `SOURCE_DATE_EPOCH` set to the pinned commit's committer date
+makes two clean builds byte-identical; without it makepkg stamps the current
+time into `builddate` and every archive member mtime.
+
+`.github/workflows/build.yml` runs the compiler and option matrix, the
+analyzers, and the command-line contracts.
+`.github/workflows/package.yml` proves the source pin, the version identity in
+both recipe and binary, the namcap verdict, and the byte-identical rebuild.
 
 Minimum validation by changed surface:
 
@@ -254,8 +268,9 @@ Minimum validation by changed surface:
 - Read-path selection in `detect.c` or `radeon.c`: build plus a run on the
   affected family, and confirmation that the other family's path is unchanged.
 - PCI ID tables: `./familycheck.sh`.
-- Makefile or `PKGBUILD`: a clean build from a fresh copy plus an install or
-  package artifact check.
+- Makefile or `PKGBUILD`: a clean `makepkg` run from a directory outside the
+  checkout, the packaged binary's `--version` matching `pkgver`, and a second
+  clean build producing an identical artifact.
 - Shell scripts: `shellcheck` plus a known-good and a known-bad path.
 - Comments and documentation: comment hygiene and a source-reference audit.
 
