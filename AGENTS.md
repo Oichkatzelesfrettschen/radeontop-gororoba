@@ -193,10 +193,19 @@ Claims without that backing are hypotheses. When a comment conflicts with a
 higher-ranked source, cite the higher-ranked source and remove or annotate the
 comment.
 
+A register definition establishes a field's position and architectural name, and
+a rank-1 observation and a rank-2 or rank-3 decode answer different questions. A
+target non-observation challenges the exposure hypothesis and constrains
+observability under the sampled conditions; falsifying the decode itself takes
+contradictory field evidence, such as the bit carrying a different block's
+activity. Rank governs the gauge-exposure decision, and the decode keeps the
+field it names.
+
 The RS480 lane audit is the calibration example: a live `RBBM_STATUS` histogram
-under a sustained textured fill overrode the `r300d.h` decode, and the
-rasterizer, texture, and render-backend bits that never assert on RS482 lost
-their gauges.
+under a sustained textured fill overrode the gauge-exposure decision derived
+from the `r300d.h` decode, and the rasterizer, texture, and render-backend lanes
+lost their gauges because the sampled RS482 conditions showed those bits clear
+throughout. `r300d.h` still names those fields.
 
 ### Falsification record
 
@@ -204,9 +213,15 @@ Before a gauge or read-path change, record the direct observation, the register
 or kernel source constraint, the hypothesis, the falsification criterion, and
 the command that produces the reading.
 
-Prediction form: if this mapping is correct, bit N of `RBBM_STATUS` asserts
-under `[named load]` and stays clear at idle. If the bit stays clear under load,
-the mapping is falsified.
+Prediction form: if bit N of `RBBM_STATUS` is exposed on this part, it asserts
+under `[named load]` and stays clear at idle. A bit that stays clear under load
+refutes the exposure hypothesis for the sampled rate, load, and part, and the
+lane is display-gated on that result. The decode keeps its field position and
+architectural name, which the register document establishes.
+
+A non-observation bounds the sampling that produced it. Record the rate, the
+window, and the load, because a higher-rate sampler can assert a bit a slower
+one misses.
 
 When a reading deviates from prediction, the deviation is the finding. Open a
 new investigation instead of changing the prediction after observation.

@@ -423,9 +423,12 @@ Named slices, each independently landable.
   publication under a mutex, replacing the current unsynchronized reader access.
 - **MMIO**: explicit `volatile` device reads, so the source requires a fresh read
   rather than relying on the current indirect-call structure to force one.
-- **Packaging and CI**: an immutable package source pinned to a commit rather
-  than a tar of the working directory, and a GCC plus Clang matrix that binds the
-  static-analysis result to the commit users receive.
+- **Packaging and CI**: `makerepropkg`, which rebuilds a package against the
+  `.BUILDINFO` package set from the Arch Linux Archive, needs a privileged chroot
+  and exact archive resolution that the container job cannot supply, so the
+  workflow proves build-to-build determinism at a pinned `SOURCE_DATE_EPOCH`
+  instead. Branch protection does not yet require the workflows, so a merge can
+  bypass the gates they run.
 - **Unmapped**: `PB_BUSY` (bit 24) carries no block meaning in `r300d.h` and
   stays unmapped until a source names it. The per-block cache status registers in
   the `0x4xxx` window are the readable alternative to the non-observable back-end

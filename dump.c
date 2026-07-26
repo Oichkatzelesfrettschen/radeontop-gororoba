@@ -121,10 +121,11 @@ void dumpdata(const unsigned int ticks, const char file[], const unsigned int li
 		float mclk_ghz = results->mclk * k / 1000.0f;
 		float sclk_ghz = results->sclk * k / 1000.0f;
 
-		// A zero mask means the block either does not exist on this
-		// family or its busy bit never asserts on the silicon; printing
-		// a perpetual 0.00%% gauge for it would mislead, so every lane a
-		// family can lack is gated on its mask.
+		// A zero mask means the block is absent on this family, or its
+		// exposure on the target remains unconfirmed and the lane stays
+		// unexposed until an observation supports it.  Either way a
+		// perpetual 0.00%% gauge would report a number the evidence does
+		// not carry, so every lane a family can lack is gated on its mask.
 		fprintf(f, "gpu %.2f%%, ", gui);
 		fprintf(f, "ee %.2f%%, ", ee);
 		fprintf(f, "vgt %.2f%%, ", vgt);

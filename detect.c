@@ -488,12 +488,13 @@ void initbits(int fam) {
 		// word saturating at GUI|GA|CP_CMDSTRM|ENG_EV|CF_PIPE -- each of
 		// those now has its own lane (gpu|pa|cp|ee|cf).  The kernel decode
 		// also names RE_BUSY (21), TAM|TDM|TIM (22|23|25), and RB3D_BUSY
-		// (19), but on RS482 silicon those bits never assert (the
-		// rasterizer, texture, and render-backend bits stay permanently
-		// clear in that histogram).  Perpetual-zero gauges mislead, so
-		// those lanes stay masked off; the per-block cache status registers
-		// in the 0x4xxx window are the readable alternative and belong to
-		// the gated lane, not a poller.
+		// (19), and r300d.h holds those field positions.  The RS482 histogram
+		// showed them clear throughout, so their exposure on this part is
+		// unconfirmed and a gauge would render a number the observation does
+		// not support.  Those lanes stay masked off pending a higher-rate
+		// sampler; the per-block cache status registers in the 0x4xxx window
+		// are the readable alternative and belong to the gated lane, not a
+		// poller.
 		bits.sc = bits.ta = bits.cb = bits.db = 0;
 		bits.tc = bits.sx = bits.sh = bits.spi = bits.smx = bits.cr = 0;
 		bits.uvd = 0;   // RS482 has no UVD -- the 3D pipe is the only decoder
