@@ -89,16 +89,21 @@ jobs:
             makepkg --noconfirm --force
 
       # The binary must name the source that produced it, which is the link a
-      # pinned recipe exists to establish.
+      # pinned recipe exists to establish.  The package is named rather than
+      # globbed: withholding the Makefile's own -s leaves symbols for makepkg to
+      # split, so the build also emits a -debug package that a glob would match.
       - name: Version identity in the binary
         run: |
           set -eu
+          main="radeontop-gororoba-$DECLARED_PKGVER-$DECLARED_PKGREL-x86_64.pkg.tar.zst"
+          test -f "$main" || { echo "no package named $main" >&2; ls -1 ./*.pkg.tar.zst >&2; exit 1; }
           mkdir -p extract
-          bsdtar xf ./*.pkg.tar.zst -C extract usr/bin/radeontop
+          bsdtar xf "$main" -C extract usr/bin/radeontop
           got=$(./extract/usr/bin/radeontop --version)
           want="RadeonTop $DECLARED_PKGVER"
           test "$got" = "$want" || { echo "binary says '$got', recipe says '$want'" >&2; exit 1; }
-          bsdtar xOf ./*.pkg.tar.zst .PKGINFO | grep -x "pkgver = $DECLARED_PKGVER-$DECLARED_PKGREL"
+          bsdtar xOf "$main" .PKGINFO | grep -x "pkgver = $DECLARED_PKGVER-$DECLARED_PKGREL"
+          echo "MAIN_PACKAGE=$main" >> "$GITHUB_ENV"
 
       # namcap exits 0 on warnings, so the gate reads its output.  An E: line
       # fails the job and a W: line is printed for the pull request to explain.
@@ -106,7 +111,7 @@ jobs:
         run: |
           set -eu
           namcap PKGBUILD | tee namcap-recipe.txt
-          namcap ./*.pkg.tar.zst | tee namcap-package.txt
+          namcap "$MAIN_PACKAGE" | tee namcap-package.txt
           ! grep -q '\bE:' namcap-recipe.txt namcap-package.txt
 
       # makepkg stamps the current time into builddate and every archive member
@@ -117,14 +122,20 @@ jobs:
       - name: Byte-identical rebuild
         run: |
           set -eu
-          # The reference copy carries no .pkg.tar.zst suffix, so the glob that
-          # names the second build cannot match it.
-          cp ./*.pkg.tar.zst reference-build
+          # The reference copies live in a subdirectory, so the glob that names
+          # the second build cannot match them.  Every package the recipe emits
+          # is compared, the -debug split included.
+          mkdir -p reference
+          cp ./*.pkg.tar.zst reference/
           sudo -u builder env SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
             makepkg --noconfirm --force --cleanbuild
-          cmp reference-build ./*.pkg.tar.zst \
-            || { echo "two clean builds of one commit differ" >&2; exit 1; }
-          sha256sum reference-build
+          for pkg in reference/*.pkg.tar.zst; do
+            name=$(basename "$pkg")
+            test -f "$name" || { echo "second build did not emit $name" >&2; exit 1; }
+            cmp "$pkg" "$name" \
+              || { echo "two clean builds of one commit differ in $name" >&2; exit 1; }
+          done
+          sha256sum reference/*.pkg.tar.zst
 
       - uses: actions/upload-artifact@v4
         with:
