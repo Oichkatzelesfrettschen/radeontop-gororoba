@@ -213,9 +213,10 @@ void present(const unsigned int ticks, const char card[], unsigned int color,
 		// Enough height?
 		if (h > bigh) start++;
 
-		// A zero mask means the block either does not exist on this
-		// family or its busy bit never asserts on the silicon, so the
-		// row is dropped rather than rendered as a perpetual 0.00%.
+		// A zero mask means the block is absent on this family, or its
+		// exposure on the target remains unconfirmed and the lane stays
+		// unexposed until an observation supports it, so the row is
+		// dropped rather than rendered as a perpetual 0.00%.
 		if (color) attron(COLOR_PAIR(3));
 		if (bits.ta) {
 			percentage(start, w, ta);
