@@ -1,0 +1,10 @@
+# clangd resolves headers per translation unit, and the Makefile supplies
+# -Iinclude only on its own compile lines, so an editor-driven parse of
+# collector.c or any consumer of collector.h fails to find the header and
+# reports every type in it as unknown.  Adding the include path and the
+# language standard here makes an editor parse match the build.
+CompileFlags:
+  Add:
+    - -Iinclude
+    - -std=gnu11
+    - -D_GNU_SOURCE
