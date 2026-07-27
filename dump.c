@@ -57,12 +57,12 @@ static void dump_line(FILE *f, const struct engine_masks *masks,
 		const struct collector_snapshot *snapshot, unsigned char bus) {
 	char buffer[16];
 
-	// The timestamp labels the window's scheduled end, taken by the
-	// collector.  Stamping it here would date the measurement by however
-	// long this writer was blocked.
+	// The timestamp labels the window's scheduled end, which the collector
+	// derives from the publication lag.  Stamping it here would date the
+	// measurement by however long this writer was blocked.
 	fprintf(f, "%llu.%06llu: ",
-		(unsigned long long) snapshot->window_end_realtime.tv_sec,
-		(unsigned long long) (snapshot->window_end_realtime.tv_nsec / 1000));
+		(unsigned long long) snapshot->scheduled_end_realtime.tv_sec,
+		(unsigned long long) (snapshot->scheduled_end_realtime.tv_nsec / 1000));
 
 	fprintf(f, "bus %02x, ", bus);
 

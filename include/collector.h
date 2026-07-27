@@ -141,10 +141,16 @@ struct collector_signal_stats {
 struct collector_snapshot {
 	uint64_t generation;
 
-	struct timespec window_start;        // monotonic, scheduled
-	struct timespec window_end;          // monotonic, scheduled
-	struct timespec published;           // monotonic, actual
-	struct timespec window_end_realtime; // wall clock at the scheduled end
+	struct timespec window_start;           // monotonic, scheduled
+	struct timespec window_end;             // monotonic, scheduled
+	struct timespec published;              // monotonic, actual
+	struct timespec published_realtime;     // wall clock, read at publication
+	// Wall clock at the scheduled end, derived by subtracting the publication
+	// lag from the near-simultaneous monotonic/realtime pair above.  Reading
+	// CLOCK_REALTIME at publication and calling it the scheduled end dates the
+	// window by however long the endpoint reads took.  The monotonic fields
+	// remain authoritative for cadence, because realtime steps.
+	struct timespec scheduled_end_realtime;
 
 	uint64_t nominal_slots;
 	uint64_t attempted_slots;
