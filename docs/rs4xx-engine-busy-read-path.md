@@ -321,18 +321,32 @@ consistent with that figure but is not explained by it; separating them needs an
 autocorrelation estimate or repeated independent windows, neither of which is
 retained.
 
-### Relative sleep biases the sample-time distribution
+### The sample grid is absolute, and its shortfall is reported
 
-The collector reads the registers and then calls `usleep` for a fixed relative
-interval. Read time therefore adds to every period, the achieved rate is below
-the requested `ticks`, and the offset accumulates as drift. Scheduler delay can
-correlate with the workload or with its submission thread, so the delay is not
-guaranteed to be independent of what is being measured. `N` stays intact because
-the loop counts samples rather than elapsed time, but the sample instants are not
-a clean fixed-rate grid.
+A relative sleep after each read adds read time to every period, so the achieved
+rate falls below the requested `ticks` and the offset accumulates as drift.
+Scheduler delay can correlate with the workload or with its submission thread, so
+that delay is not independent of what is being measured.
 
-An absolute `CLOCK_MONOTONIC` deadline, retained timestamps, and a missed-deadline
-count would make the achieved sampling process observable. None is implemented.
+The collector instead waits on absolute `CLOCK_MONOTONIC` deadlines laid on a
+fixed grid, carrying the division remainder so a rate that does not divide a
+second exactly still lands exactly one second later after `ticks` slots. A
+wake-up that arrives late gives up the slots it overran rather than firing
+catch-up reads, and a read that outlasts its own period gives up the deadlines it
+crossed, so a slow device returns to the grid instead of reading back to back.
+Each published window retains its scheduled start and end, the attempted and
+missed slot counts, the late wake-up count, the maximum lateness, and the maximum
+read latency, which makes the achieved sampling process observable rather than
+assumed.
+
+A sample measures the device at the instant it is taken, so it is attributed to
+the window containing that instant. A wake-up that crosses one or more window
+boundaries publishes those windows first, with no attempt of their own, before
+the read runs.
+
+Sampling on a fixed grid remains a periodic process, so a workload periodic at a
+harmonic of the sampling rate can still be sampled at a fixed phase. Dithering
+the deadlines would break that coupling and is not implemented.
 
 ## Reproduction
 
@@ -409,6 +423,41 @@ debugfs file comes from the `steinmarder` RS480 candidate-regs lane rather than
 stock upstream radeon, so an absent file leaves the header out and the run
 otherwise unchanged.
 
+## Collector architecture and its acceptance
+
+The collector is an injectable object: a backend supplies the register reads and
+their failure classification, a clock supplies time, and the worker owns the
+cadence. `include/collector.h` names libc and pthread only, so
+`gcc -Iinclude -MM collector.c` lists exactly one project header and the
+accumulator, the schedule, and the publication path are exercised without a GPU.
+`tests/collector_test.c` drives a scripted backend and a single-stepping virtual
+clock that can consume time inside a read, so backend latency and multi-window
+lateness are both observable.
+
+Two scheduler properties rest on negative controls rather than on passing
+alongside the implementation. Reintroducing the pre-read timestamp in the
+post-read deadline skip makes the latency case read five times where the grid
+allows four; sampling before rolling the windows a wake-up overran makes the
+attribution case count two attempts in a window that saw one. Both mutations
+fail the suite, and the implementation passes it.
+
+Silicon evidence for the read path itself is the RS482 target under the loads
+named above. The rate result is `valid 500/500, missed 0, failed 0` for a
+sustained 500 Hz window, which establishes a validated rate of at least 500 Hz
+for that source, host, load, and boot; the `1000000` parser bound is arithmetic
+and carries no silicon claim. The grid change is visible in successive window
+labels: a relative-sleep control drifts forward monotonically window over window,
+while the absolute grid holds its sub-second offset. The bundles carrying the
+exact commands, boot identifiers, window counts, and raw output live on the
+target and are not yet mirrored into `steinmarder-r300`; until they are, those
+figures rest on the run report rather than on a retained artifact.
+
+Not run: the permanent privilege drop, which needs a setuid-root installed binary
+because a process launched through `sudo` already has real uid 0 and can only
+drop to 0; and the `libdrm_amdgpu` and radeon-ioctl paths, for which no part is
+reachable, leaving their `-errno` classification reasoned from API convention and
+exercised only by the synthetic backend.
+
 ## Open work
 
 Named slices, each independently landable.
@@ -417,10 +466,10 @@ Named slices, each independently landable.
   discriminate the three 2D explanations. A higher-rate sampler to bound missed
   assertions on the clear back-end bits. A per-sample `CMDFIFO_AVAIL`
   distribution rather than an aggregate.
-- **Collector**: backend-return-value accounting so a failed read becomes an
-  invalid sample rather than an idle one; absolute monotonic deadlines with
-  retained timestamps and a missed-deadline count; generation-numbered snapshot
-  publication under a mutex, replacing the current unsynchronized reader access.
+- **Collector**: dithered or randomized deadlines, so a workload periodic at a
+  harmonic of the sampling rate cannot be sampled at a fixed phase. Per-signal
+  health is serialized into the dump, and a capture consumer that aggregates
+  across runs still has to weight each window by its own denominator.
 - **MMIO**: explicit `volatile` device reads, so the source requires a fresh read
   rather than relying on the current indirect-call structure to force one.
 - **Packaging and CI**: `makerepropkg`, which rebuilds a package against the

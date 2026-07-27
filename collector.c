@@ -170,14 +170,19 @@ static void note_read(struct collector_accumulator *accumulator,
 		accumulator->fatal_read_result = COLLECTOR_READ_FATAL;
 }
 
-static void sample_once(struct collector *collector,
+// Returns 0, or -1 when the clock failed and the latency bounds would be
+// indeterminate.  A fatal classification stops the slot at the register that
+// reported it: a device that answers "gone" answers no later register either,
+// so the remaining reads would be requests to hardware already known absent.
+static int sample_once(struct collector *collector,
 		struct collector_accumulator *accumulator) {
 	const struct collector_backend *backend = &collector->backend;
 	struct timespec before, after;
 	uint32_t value;
 	int result;
 
-	collector->clock.now(collector->clock.context, &before);
+	if (collector->clock.now(collector->clock.context, &before))
+		return -1;
 
 	if (backend->capabilities & COLLECTOR_CAP_STATUS) {
 		value = 0;
@@ -196,6 +201,9 @@ static void sample_once(struct collector *collector,
 					accumulator->lane_busy[lane]++;
 			}
 		}
+
+		if (result == COLLECTOR_READ_FATAL)
+			goto done;
 	}
 
 	if (backend->capabilities & COLLECTOR_CAP_UVD) {
@@ -206,6 +214,9 @@ static void sample_once(struct collector *collector,
 			collector->masks.lane[COLLECTOR_LANE_UVD] &&
 			(value & collector->masks.lane[COLLECTOR_LANE_UVD]))
 			accumulator->lane_busy[COLLECTOR_LANE_UVD]++;
+
+		if (result == COLLECTOR_READ_FATAL)
+			goto done;
 	}
 
 	if (backend->capabilities & COLLECTOR_CAP_VCE) {
@@ -216,6 +227,9 @@ static void sample_once(struct collector *collector,
 			collector->masks.lane[COLLECTOR_LANE_VCE0] &&
 			(value & collector->masks.lane[COLLECTOR_LANE_VCE0]))
 			accumulator->lane_busy[COLLECTOR_LANE_VCE0]++;
+
+		if (result == COLLECTOR_READ_FATAL)
+			goto done;
 	}
 
 	// A failed clock read contributes no value, so the mean stays over the
@@ -228,6 +242,9 @@ static void sample_once(struct collector *collector,
 			accumulator->sclk_mean_khz +=
 				((double) value - accumulator->sclk_mean_khz) /
 				(double) accumulator->sclk.valid;
+
+		if (result == COLLECTOR_READ_FATAL)
+			goto done;
 	}
 
 	if (backend->capabilities & COLLECTOR_CAP_MCLK) {
@@ -240,7 +257,9 @@ static void sample_once(struct collector *collector,
 				(double) accumulator->mclk.valid;
 	}
 
-	collector->clock.now(collector->clock.context, &after);
+done:
+	if (collector->clock.now(collector->clock.context, &after))
+		return -1;
 
 	{
 		const int64_t latency = collector_timespec_delta_ns(&before, &after);
@@ -248,15 +267,21 @@ static void sample_once(struct collector *collector,
 		if (latency > 0 && (uint64_t) latency > accumulator->max_read_latency_ns)
 			accumulator->max_read_latency_ns = (uint64_t) latency;
 	}
+
+	return 0;
 }
 
-static void publish(struct collector *collector,
-		struct collector_accumulator *accumulator,
+// Returns COLLECTOR_READ_FATAL when an endpoint read reported the device gone,
+// in which case the published snapshot already carries the fatal flag and the
+// worker exits rather than reading the same device again.
+static int publish(struct collector *collector,
+		const struct collector_accumulator *accumulator,
 		const struct timespec *window_start,
 		const struct timespec *window_end,
 		uint64_t nominal_slots) {
 	const struct collector_backend *backend = &collector->backend;
 	struct collector_snapshot snapshot;
+	int endpoint_result = COLLECTOR_READ_OK;
 
 	memset(&snapshot, 0, sizeof(snapshot));
 
@@ -283,34 +308,54 @@ static void publish(struct collector *collector,
 	// over the window, and each carries its own validity.
 	if (backend->capabilities & COLLECTOR_CAP_VRAM) {
 		uint64_t value = 0;
+		const int result = backend->read_vram(backend->context, &value);
 
-		if (backend->read_vram(backend->context, &value) == COLLECTOR_READ_OK) {
+		if (result == COLLECTOR_READ_OK) {
 			snapshot.vram = value;
 			snapshot.vram_valid = true;
+		} else if (result == COLLECTOR_READ_FATAL) {
+			endpoint_result = COLLECTOR_READ_FATAL;
 		}
 	}
 
-	if (backend->capabilities & COLLECTOR_CAP_GTT) {
+	// A fatal VRAM result already established the device is gone, so the GTT
+	// query is not issued.
+	if ((backend->capabilities & COLLECTOR_CAP_GTT) &&
+		endpoint_result != COLLECTOR_READ_FATAL) {
 		uint64_t value = 0;
+		const int result = backend->read_gtt(backend->context, &value);
 
-		if (backend->read_gtt(backend->context, &value) == COLLECTOR_READ_OK) {
+		if (result == COLLECTOR_READ_OK) {
 			snapshot.gtt = value;
 			snapshot.gtt_valid = true;
+		} else if (result == COLLECTOR_READ_FATAL) {
+			endpoint_result = COLLECTOR_READ_FATAL;
 		}
+	}
+
+	if (endpoint_result == COLLECTOR_READ_FATAL) {
+		snapshot.fatal = true;
+		snapshot.fatal_read_result = COLLECTOR_READ_FATAL;
 	}
 
 	collector->clock.now(collector->clock.context, &snapshot.published);
+	clock_gettime(CLOCK_REALTIME, &snapshot.published_realtime);
 
-	// The realtime stamp labels the window's scheduled end.  It is taken
-	// here rather than where a consumer prints, because a blocked writer
-	// would otherwise date the measurement by its own delay.
-	clock_gettime(CLOCK_REALTIME, &snapshot.window_end_realtime);
+	// The pair above is near-simultaneous, so the publication lag measured on
+	// the monotonic clock converts the realtime stamp back to the scheduled
+	// end.  Dating the window by publication time instead would move the label
+	// by however long the endpoint reads took.
+	snapshot.scheduled_end_realtime = snapshot.published_realtime;
+	timespec_add_ns(&snapshot.scheduled_end_realtime,
+		-collector_timespec_delta_ns(window_end, &snapshot.published));
 
 	pthread_mutex_lock(&collector->mutex);
 	snapshot.generation = collector->snapshot.generation + 1;
 	collector->snapshot = snapshot;
 	pthread_cond_broadcast(&collector->changed);
 	pthread_mutex_unlock(&collector->mutex);
+
+	return endpoint_result;
 }
 
 static void publish_fatal(struct collector *collector, int fatal_read_result) {
@@ -338,47 +383,112 @@ static void mark_finished(struct collector *collector) {
 	pthread_mutex_unlock(&collector->mutex);
 }
 
+// The slot grid for the window in progress.  Slot `slot` is the next one due,
+// and `deadline` is its scheduled time.  The grid advances by 1e9/ticks
+// nanoseconds carrying the remainder, so a rate that does not divide a second
+// exactly still lands exactly one second later after `ticks` slots; repeatedly
+// adding a truncated period would drift instead.  The carry returns to zero
+// after `ticks` slots, so slot `nominal_slots` coincides exactly with
+// `window_end` and the grid never diverges from the window boundary.
+struct collector_schedule {
+	struct timespec window_start;
+	struct timespec window_end;
+	struct timespec deadline;
+	int64_t remainder;
+	uint64_t slot;
+};
+
+static void schedule_step(struct collector_schedule *schedule, uint32_t ticks,
+		int64_t period_quotient, int64_t period_remainder) {
+	schedule->remainder += period_remainder;
+	timespec_add_ns(&schedule->deadline, period_quotient);
+
+	if (schedule->remainder >= (int64_t) ticks) {
+		schedule->remainder -= (int64_t) ticks;
+		timespec_add_ns(&schedule->deadline, 1);
+	}
+
+	schedule->slot++;
+}
+
+// The deadline one slot later, without mutating the grid, so the caller can
+// test whether the slot it holds is still the due one.
+static struct timespec schedule_next_deadline(const struct collector_schedule *schedule,
+		uint32_t ticks, int64_t period_quotient, int64_t period_remainder) {
+	struct timespec next = schedule->deadline;
+
+	timespec_add_ns(&next, period_quotient);
+
+	if (schedule->remainder + period_remainder >= (int64_t) ticks)
+		timespec_add_ns(&next, 1);
+
+	return next;
+}
+
+// Publishes and opens the next window once the grid reaches the slot count,
+// and does nothing before that.  Returns COLLECTOR_READ_FATAL when an endpoint
+// read reported the device gone.
+static int schedule_complete_window(struct collector *collector,
+		struct collector_accumulator *accumulator,
+		struct collector_schedule *schedule, uint64_t nominal_slots) {
+	int result;
+
+	if (schedule->slot < nominal_slots)
+		return COLLECTOR_READ_OK;
+
+	result = publish(collector, accumulator, &schedule->window_start,
+		&schedule->window_end, nominal_slots);
+
+	memset(accumulator, 0, sizeof(*accumulator));
+
+	schedule->window_start = schedule->window_end;
+	timespec_add_ns(&schedule->window_end,
+		(int64_t) collector->config.dumpinterval * NS_PER_SEC);
+	schedule->slot = 0;
+	schedule->remainder = 0;
+
+	return result;
+}
+
 static void *collector_worker(void *argument) {
 	struct collector *collector = argument;
 
 	const uint32_t ticks = collector->config.ticks;
 	const uint64_t nominal_slots = (uint64_t) ticks * collector->config.dumpinterval;
-
-	// The slot grid advances by 1e9/ticks nanoseconds carrying the
-	// remainder, so a rate that does not divide a second exactly still lands
-	// exactly one second later after `ticks` slots.  Repeatedly adding a
-	// truncated period would drift instead.
 	const int64_t period_quotient = NS_PER_SEC / ticks;
 	const int64_t period_remainder = NS_PER_SEC % ticks;
 
 	struct collector_accumulator accumulator;
-	struct timespec window_start, window_end, deadline, now;
-	int64_t remainder = 0;
-	uint64_t slot = 0;
+	struct collector_schedule schedule;
+	struct timespec now, after;
 
 	memset(&accumulator, 0, sizeof(accumulator));
+	memset(&schedule, 0, sizeof(schedule));
 
-	if (collector->clock.now(collector->clock.context, &window_start)) {
+	if (collector->clock.now(collector->clock.context, &schedule.window_start)) {
 		publish_fatal(collector, COLLECTOR_READ_FATAL);
 		mark_finished(collector);
 		return NULL;
 	}
 
-	deadline = window_start;
-	window_end = window_start;
-	timespec_add_ns(&window_end, (int64_t) collector->config.dumpinterval * NS_PER_SEC);
+	schedule.deadline = schedule.window_start;
+	schedule.window_end = schedule.window_start;
+	timespec_add_ns(&schedule.window_end,
+		(int64_t) collector->config.dumpinterval * NS_PER_SEC);
 
 	while (!stop_requested(collector)) {
-		collector->clock.wait_until(collector->clock.context, &deadline);
+		if (collector->clock.wait_until(collector->clock.context, &schedule.deadline))
+			goto fatal;
 
 		if (stop_requested(collector))
 			break;
 
 		if (collector->clock.now(collector->clock.context, &now))
-			break;
+			goto fatal;
 
 		{
-			const int64_t lateness = collector_timespec_delta_ns(&deadline, &now);
+			const int64_t lateness =
+				collector_timespec_delta_ns(&schedule.deadline, &now);
 
 			if (lateness > 0) {
 				accumulator.late_wakeups++;
@@ -387,48 +497,65 @@ static void *collector_worker(void *argument) {
 			}
 		}
 
-		// Exactly one read per wake-up.  A burst of catch-up reads would
-		// bias the duty estimate toward whatever the stall interrupted
-		// and would concentrate BAR traffic the hazard policy avoids.
-		sample_once(collector, &accumulator);
+		// Give up every slot the wake-up already overran, and publish each
+		// window whose boundary it crossed, before reading.  A sample taken
+		// now measures the device now, so attributing it to a window that
+		// ended before the read began would place a real measurement in the
+		// wrong window.  Those windows publish with no attempt of their own.
+		for (;;) {
+			const struct timespec next = schedule_next_deadline(&schedule,
+				ticks, period_quotient, period_remainder);
+
+			if (!timespec_reached(&next, &now))
+				break;
+
+			accumulator.missed_slots++;
+			schedule_step(&schedule, ticks, period_quotient, period_remainder);
+
+			if (schedule_complete_window(collector, &accumulator, &schedule,
+					nominal_slots) == COLLECTOR_READ_FATAL)
+				goto fatal;
+		}
+
+		// Exactly one read per wake-up.  A burst of catch-up reads would bias
+		// the duty estimate toward whatever the stall interrupted and would
+		// concentrate BAR traffic the hazard policy avoids.
+		if (sample_once(collector, &accumulator))
+			goto fatal;
+
 		accumulator.attempted_slots++;
 
-		if (accumulator.fatal_read_result == COLLECTOR_READ_FATAL) {
-			publish_fatal(collector, COLLECTOR_READ_FATAL);
-			mark_finished(collector);
-			return NULL;
-		}
+		if (accumulator.fatal_read_result == COLLECTOR_READ_FATAL)
+			goto fatal;
 
-		// Advance to the first deadline still in the future.  Every slot
-		// stepped over without a read counts as missed.
-		{
-			const uint64_t sampled_slot = slot;
+		if (collector->clock.now(collector->clock.context, &after))
+			goto fatal;
 
-			do {
-				remainder += period_remainder;
-				timespec_add_ns(&deadline, period_quotient);
-				if (remainder >= (int64_t) ticks) {
-					remainder -= (int64_t) ticks;
-					timespec_add_ns(&deadline, 1);
-				}
-				slot++;
-			} while (slot < nominal_slots && timespec_reached(&deadline, &now));
+		schedule_step(&schedule, ticks, period_quotient, period_remainder);
 
-			accumulator.missed_slots += slot - sampled_slot - 1;
-		}
+		if (schedule_complete_window(collector, &accumulator, &schedule,
+				nominal_slots) == COLLECTOR_READ_FATAL)
+			goto fatal;
 
-		if (slot >= nominal_slots) {
-			publish(collector, &accumulator, &window_start, &window_end,
-				nominal_slots);
+		// A read that outlasted its own period leaves later deadlines already
+		// behind.  Giving them up here is what returns the worker to the grid
+		// instead of letting wait_until fall through and start another read
+		// immediately for as long as the device stays slow.
+		while (timespec_reached(&schedule.deadline, &after)) {
+			accumulator.missed_slots++;
+			schedule_step(&schedule, ticks, period_quotient, period_remainder);
 
-			window_start = window_end;
-			timespec_add_ns(&window_end,
-				(int64_t) collector->config.dumpinterval * NS_PER_SEC);
-			memset(&accumulator, 0, sizeof(accumulator));
-			slot = 0;
+			if (schedule_complete_window(collector, &accumulator, &schedule,
+					nominal_slots) == COLLECTOR_READ_FATAL)
+				goto fatal;
 		}
 	}
 
+	mark_finished(collector);
+	return NULL;
+
+fatal:
+	publish_fatal(collector, COLLECTOR_READ_FATAL);
 	mark_finished(collector);
 	return NULL;
 }
@@ -451,6 +578,22 @@ int collector_init(struct collector *collector,
 	if ((uint64_t) config->ticks * config->dumpinterval > UINT32_MAX)
 		return -2;
 
+	// The worker calls both on every wake-up, so a null one faults on the
+	// first iteration rather than at construction.
+	if (!clock->now || !clock->wait_until)
+		return -3;
+
+	// A capability asserts that its register is readable, which makes the
+	// callback that reads it part of the assertion.
+	if (((backend->capabilities & COLLECTOR_CAP_STATUS) && !backend->read_status) ||
+		((backend->capabilities & COLLECTOR_CAP_UVD) && !backend->read_uvd_status) ||
+		((backend->capabilities & COLLECTOR_CAP_VCE) && !backend->read_vce_status) ||
+		((backend->capabilities & COLLECTOR_CAP_SCLK) && !backend->read_sclk) ||
+		((backend->capabilities & COLLECTOR_CAP_MCLK) && !backend->read_mclk) ||
+		((backend->capabilities & COLLECTOR_CAP_VRAM) && !backend->read_vram) ||
+		((backend->capabilities & COLLECTOR_CAP_GTT) && !backend->read_gtt))
+		return -4;
+
 	memset(collector, 0, sizeof(*collector));
 	collector->config = *config;
 	collector->backend = *backend;
@@ -458,18 +601,18 @@ int collector_init(struct collector *collector,
 	collector->clock = *clock;
 
 	if (pthread_mutex_init(&collector->mutex, NULL))
-		return -3;
+		return -5;
 
 	if (pthread_condattr_init(&attr)) {
 		pthread_mutex_destroy(&collector->mutex);
-		return -4;
+		return -6;
 	}
 
 	if (pthread_condattr_setclock(&attr, CLOCK_MONOTONIC) ||
 		pthread_cond_init(&collector->changed, &attr)) {
 		pthread_condattr_destroy(&attr);
 		pthread_mutex_destroy(&collector->mutex);
-		return -5;
+		return -7;
 	}
 
 	pthread_condattr_destroy(&attr);

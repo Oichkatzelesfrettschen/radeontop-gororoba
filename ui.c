@@ -413,11 +413,20 @@ int present(struct collector *collector, const struct engine_masks *masks,
 			}
 		}
 
-		if (sclk_max != 0 && snapshot.sclk.valid) {
+		// Each clock row is gated on its own signal.  A part whose memory
+		// clock is unsupported, or whose every memory-clock read failed,
+		// renders no memory row rather than a figure carried by the shader
+		// clock's validity.
+		if (mclk_max != 0 && snapshot.mclk.valid) {
 			if (color) attron(COLOR_PAIR(3));
 			percentage(start, w, mclk);
 			printright(start++, hw, _("%.2fG / %.2fG Memory Clock %6.2f%%"),
 					mclk_ghz, mclk_max * 1e-6f, mclk);
+			if (color) attroff(COLOR_PAIR(3));
+		}
+
+		if (sclk_max != 0 && snapshot.sclk.valid) {
+			if (color) attron(COLOR_PAIR(3));
 			percentage(start, w, sclk);
 			printright(start++, hw, _("%.2fG / %.2fG Shader Clock %6.2f%%"),
 					sclk_ghz, sclk_max * 1e-6f, sclk);
