@@ -53,6 +53,34 @@ static void lane_field(FILE *f, const struct engine_masks *masks,
 			collector_lane_fraction(snapshot, lane)));
 }
 
+// Serializes one measurement class's health.  A lane percentage is divided by
+// its own register's valid count, so a capture that carries only the status
+// denominator cannot distinguish a figure resting on 12 valid reads from one
+// resting on 120.
+static void signal_health(FILE *f, const char *name, uint32_t capability,
+		const struct collector_snapshot *snapshot,
+		const struct collector_signal_stats *stats) {
+	if (!(snapshot->capabilities & capability)) {
+		fprintf(f, ", %s unsupported", name);
+		return;
+	}
+
+	fprintf(f, ", %s %llu/%llu+%lluf", name,
+		(unsigned long long) stats->valid,
+		(unsigned long long) snapshot->nominal_slots,
+		(unsigned long long) stats->failed);
+}
+
+// An endpoint read is a single point measurement, so it reports presence rather
+// than a rate: absent capability, a valid reading, or a read that failed.
+static void endpoint_health(FILE *f, const char *name, uint32_t capability,
+		const struct collector_snapshot *snapshot, bool valid) {
+	if (!(snapshot->capabilities & capability))
+		fprintf(f, ", %s unsupported", name);
+	else
+		fprintf(f, ", %s %s", name, valid ? "ok" : "failed");
+}
+
 static void dump_line(FILE *f, const struct engine_masks *masks,
 		const struct collector_snapshot *snapshot, unsigned char bus) {
 	char buffer[16];
@@ -103,26 +131,45 @@ static void dump_line(FILE *f, const struct engine_masks *masks,
 			100.0 * (double) snapshot->gtt / (double) gttsize,
 			(double) snapshot->gtt / 1024.0 / 1024.0);
 
-	// The clock figures are means over their own valid readings, not over
-	// the sample slots, so they carry their own denominators below.
-	if (snapshot->sclk.valid && sclk_max)
-		fprintf(f, ", mclk %.2f%% %.3fghz, sclk %.2f%% %.3fghz",
+	// Each clock is a mean over its own valid readings, so each is gated on
+	// its own validity.  Rendering the memory clock because the shader clock
+	// validated would report a figure no read produced, and a zero maximum
+	// would divide by zero.
+	if (snapshot->mclk.valid && mclk_max)
+		fprintf(f, ", mclk %.2f%% %.3fghz",
 			100.0 * snapshot->mclk_mean_khz / (double) mclk_max,
-			snapshot->mclk_mean_khz / 1e6,
+			snapshot->mclk_mean_khz / 1e6);
+
+	if (snapshot->sclk.valid && sclk_max)
+		fprintf(f, ", sclk %.2f%% %.3fghz",
 			100.0 * snapshot->sclk_mean_khz / (double) sclk_max,
 			snapshot->sclk_mean_khz / 1e6);
 
-	// Coverage travels with every value on the line.  Read failures can
-	// correlate with load, so a duty figure without its denominator and its
-	// missed-slot count cannot be interpreted after the fact.
-	fprintf(f, ", gen %llu, cov %s, valid %llu/%llu, missed %llu, failed %llu",
+	// Coverage and the schedule accounting travel with every value on the
+	// line.  Read failures can correlate with load, so a duty figure without
+	// its denominator and its missed-slot count cannot be interpreted after
+	// the fact.
+	fprintf(f, ", gen %llu, cov %s, missed %llu, late %llu, maxlate %lluus, maxread %lluus, lag %lldus",
 		(unsigned long long) snapshot->generation,
 		format_percent(buffer, sizeof(buffer),
 			collector_status_coverage(snapshot)),
-		(unsigned long long) snapshot->status.valid,
-		(unsigned long long) snapshot->nominal_slots,
 		(unsigned long long) snapshot->missed_slots,
-		(unsigned long long) snapshot->status.failed);
+		(unsigned long long) snapshot->late_wakeups,
+		(unsigned long long) (snapshot->max_lateness_ns / 1000),
+		(unsigned long long) (snapshot->max_read_latency_ns / 1000),
+		(long long) (collector_timespec_delta_ns(&snapshot->window_end,
+			&snapshot->published) / 1000));
+
+	// Every enabled measurement class serializes its own denominator, so a
+	// per-lane figure can be interpreted without assuming status health
+	// applies to the register the lane actually came from.
+	signal_health(f, "status", COLLECTOR_CAP_STATUS, snapshot, &snapshot->status);
+	signal_health(f, "uvd", COLLECTOR_CAP_UVD, snapshot, &snapshot->uvd);
+	signal_health(f, "vce", COLLECTOR_CAP_VCE, snapshot, &snapshot->vce);
+	signal_health(f, "sclkread", COLLECTOR_CAP_SCLK, snapshot, &snapshot->sclk);
+	signal_health(f, "mclkread", COLLECTOR_CAP_MCLK, snapshot, &snapshot->mclk);
+	endpoint_health(f, "vramread", COLLECTOR_CAP_VRAM, snapshot, snapshot->vram_valid);
+	endpoint_health(f, "gttread", COLLECTOR_CAP_GTT, snapshot, snapshot->gtt_valid);
 
 	fprintf(f, "\n");
 }
