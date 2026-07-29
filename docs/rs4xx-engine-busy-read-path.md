@@ -466,18 +466,9 @@ Named slices, each independently landable.
   discriminate the three 2D explanations. A higher-rate sampler to bound missed
   assertions on the clear back-end bits. A per-sample `CMDFIFO_AVAIL`
   distribution rather than an aggregate.
-- **Collector**: dithered or randomized deadlines, so a workload periodic at a
-  harmonic of the sampling rate cannot be sampled at a fixed phase. Per-signal
-  health is serialized into the dump, and a capture consumer that aggregates
-  across runs still has to weight each window by its own denominator.
-- **MMIO**: explicit `volatile` device reads, so the source requires a fresh read
-  rather than relying on the current indirect-call structure to force one.
-- **Packaging and CI**: `makerepropkg`, which rebuilds a package against the
-  `.BUILDINFO` package set from the Arch Linux Archive, needs a privileged chroot
-  and exact archive resolution that the container job cannot supply, so the
-  workflow proves build-to-build determinism at a pinned `SOURCE_DATE_EPOCH`
-  instead. Branch protection does not yet require the workflows, so a merge can
-  bypass the gates they run.
+- **Collector, MMIO, packaging, and CI**: `docs/open-work.md` carries these,
+  grouped by the gate each item waits on, because they span the whole tool
+  rather than the read path this document models.
 - **Unmapped**: `PB_BUSY` (bit 24) carries no block meaning in `r300d.h` and
   stays unmapped until a source names it. The per-block cache status registers in
   the `0x4xxx` window are the readable alternative to the non-observable back-end
