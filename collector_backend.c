@@ -16,8 +16,10 @@
 
 // Binds the family-selected device readers and the RBBM/GRBM masks to the
 // collector's injectable interfaces.  The classification of a failed read lives
-// here because each read path reports differently: the MMIO readers cannot
-// fail, and drmCommandWriteRead and the libdrm_amdgpu queries return -errno.
+// here because each read path reports differently: an MMIO load always yields a
+// word and returns 0, so a device that has gone away answers all-ones and the
+// classification rests on the return convention rather than on device presence,
+// while drmCommandWriteRead and the libdrm_amdgpu queries return -errno.
 
 #include "radeontop.h"
 
