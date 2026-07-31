@@ -3,8 +3,27 @@
 # collector.c or any consumer of collector.h fails to find the header and
 # reports every type in it as unknown.  Adding the include path and the
 # language standard here makes an editor parse match the build.
+#
+# -xc names the language explicitly.  A header has no language of its own, so
+# the driver guesses Objective-C++ for a standalone parse of one, which rejects
+# -std=gnu11 and then reports every C keyword the header uses as an unknown
+# type name.
+#
+# The libdrm headers sit in a directory that pkg-config supplies to the Makefile
+# through `pkg-config --cflags libdrm`.  Without it an editor parse of detect.c
+# or radeon.c stops where xf86drm.h includes drm.h.
 CompileFlags:
   Add:
+    - -xc
     - -Iinclude
+    - -I/usr/include/libdrm
     - -std=gnu11
     - -D_GNU_SOURCE
+
+# radeontop.h is an aggregate header: it includes the libc headers its consumers
+# need so a translation unit includes one file.  clangd's include analysis reads
+# that as unused, and reports every one of them on every parse.  The Makefile's
+# -Wall -Wextra and the CI analyzers own diagnostics that describe the build.
+Diagnostics:
+  UnusedIncludes: None
+  MissingIncludes: None
