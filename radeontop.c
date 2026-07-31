@@ -101,6 +101,9 @@ static void help(const char * const me, const unsigned int ticks,
 		"-p --path device	Open DRM device node by path\n"
 		"-t --ticks 50		Samples per second (default %u)\n"
 		"-T --transparency	Enable transparency\n"
+		"   --dither-seed 7	Offset each sample inside its own slot, seeded by N,\n"
+		"			so a workload periodic at a harmonic of the sample\n"
+		"			rate meets a moving phase.  Omit for the exact grid.\n"
 		"\n"
 		"-h --help		Show this help\n"
 		"-v --version		Show the version\n"),
@@ -138,6 +141,9 @@ int main(int argc, char **argv) {
 	char *dump = NULL;
 	unsigned int dumpinterval = default_dumpinterval;
 	const char *path = NULL;
+	// Zero keeps every sample on its exact grid point, which is the default and
+	// what makes two runs of one workload directly comparable.
+	uint64_t dither_seed = 0;
 
 	// Translations
 #ifdef ENABLE_NLS
@@ -146,8 +152,13 @@ int main(int argc, char **argv) {
 	textdomain("radeontop");
 #endif
 
+	// A long-only option takes a value above the character range, so getopt_long
+	// returns it without colliding with a short option letter.
+	enum { OPT_DITHER_SEED = 0x100 };
+
 	// opts
 	const struct option opts[] = {
+		{"dither-seed", 1, 0, OPT_DITHER_SEED},
 		{"bus", 1, 0, 'b'},
 		{"color", 0, 0, 'c'},
 		{"dump", 1, 0, 'd'},
@@ -207,6 +218,12 @@ int main(int argc, char **argv) {
 			case 'p':
 				path = optarg;
 			break;
+			case OPT_DITHER_SEED:
+				// Zero is the off state and the flag's absence is how to
+				// select it, so an explicit zero is a rejected value
+				// rather than a second spelling of the default.
+				dither_seed = parse_count(optarg, _("dither seed"), 1, UINT_MAX, 10);
+			break;
 		}
 	}
 
@@ -242,7 +259,7 @@ int main(int argc, char **argv) {
 	if (collector_monotonic_clock_init(&clock))
 		die(_("Failed to initialize the collector clock"));
 
-	const struct collector_config config = { ticks, dumpinterval };
+	const struct collector_config config = { ticks, dumpinterval, dither_seed };
 	const struct collector_backend backend = collector_backend_from_device();
 	const struct engine_masks masks = collector_masks_from_bits();
 	const struct collector_clock clock_ops = collector_monotonic_clock_ops(&clock);

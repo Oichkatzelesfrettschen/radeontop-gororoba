@@ -78,6 +78,12 @@ static void check_close(double got, double want, const char *what, int line) {
 // untested.
 struct fake_clock;
 static void fake_clock_consume(struct fake_clock *clock, int64_t ns);
+static int fake_now(void *context, struct timespec *ts);
+
+// Enough entries for the dithered windows below, which run at eight slots per
+// second.  A read past the end is dropped rather than counted, so an overrun
+// shows up as a short sequence instead of a corrupted one.
+#define SAMPLE_TIME_CAP 32
 
 struct fake_backend {
 	pthread_mutex_t mutex;
@@ -90,6 +96,12 @@ struct fake_backend {
 	// outlived the join is a failure rather than a silent use-after-free.
 	bool torn_down;
 	bool read_after_teardown;
+
+	// Records the virtual time of each status read, which is where a sample
+	// actually landed inside its slot.
+	bool record_times;
+	struct timespec sample_times[SAMPLE_TIME_CAP];
+	size_t sample_time_count;
 
 	uint64_t status_calls;
 	uint64_t uvd_calls;
@@ -145,6 +157,10 @@ static void note_call(struct fake_backend *fake) {
 
 	// The clock mutex is taken under the backend mutex here and nowhere in the
 	// reverse order, so the nesting introduces no cycle.
+	if (fake->clock && fake->record_times &&
+			fake->sample_time_count < SAMPLE_TIME_CAP)
+		fake_now(fake->clock, &fake->sample_times[fake->sample_time_count++]);
+
 	if (fake->clock && fake->read_delay_ns)
 		fake_clock_consume(fake->clock, fake->read_delay_ns);
 }
@@ -426,9 +442,9 @@ struct harness {
 	struct engine_masks masks;
 };
 
-static void harness_start(struct harness *harness, uint32_t ticks,
-		uint32_t dumpinterval, uint32_t capabilities) {
-	const struct collector_config config = { ticks, dumpinterval };
+static void harness_start_seeded(struct harness *harness, uint32_t ticks,
+		uint32_t dumpinterval, uint32_t capabilities, uint64_t dither_seed) {
+	const struct collector_config config = { ticks, dumpinterval, dither_seed };
 	const struct collector_backend backend =
 		fake_backend_ops(&harness->backend, capabilities);
 	const struct collector_clock clock = fake_clock_ops(&harness->clock);
@@ -436,6 +452,12 @@ static void harness_start(struct harness *harness, uint32_t ticks,
 	CHECK(collector_init(&harness->collector, &config, &backend,
 		&harness->masks, &clock) == 0);
 	CHECK(collector_start(&harness->collector) == 0);
+}
+
+// Seed zero, so every case that does not name a seed runs on the exact grid.
+static void harness_start(struct harness *harness, uint32_t ticks,
+		uint32_t dumpinterval, uint32_t capabilities) {
+	harness_start_seeded(harness, ticks, dumpinterval, capabilities, 0);
 }
 
 // Stops and joins.  Marking the backend torn down here is what makes a read
@@ -522,6 +544,177 @@ static void case_alternating_status(void) {
 	CHECK_U64(snapshot.lane_busy[COLLECTOR_LANE_GUI], 5);
 	CHECK_CLOSE(collector_lane_fraction(&snapshot, COLLECTOR_LANE_GUI), 0.5);
 	CHECK_CLOSE(collector_status_coverage(&snapshot), 1.0);
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+// The virtual clock starts at zero, so slot i of the first window spans
+// [i * period, (i + 1) * period) in absolute virtual nanoseconds.
+static int64_t sample_offset_in_slot(const struct timespec *sample, size_t slot,
+		int64_t period) {
+	const int64_t at = (int64_t) sample->tv_sec * NS_PER_SEC + sample->tv_nsec;
+
+	return at - (int64_t) slot * period;
+}
+
+// Every dithered sample stays inside the slot it belongs to, and the offsets
+// vary rather than settling on one phase.  Membership follows the grid, so a
+// dithered window still carries the slot count an exact one carries.
+static void case_dither_keeps_samples_in_their_slots(void) {
+	static const uint32_t values[] = { GUI_BIT };
+	const int64_t period = NS_PER_SEC / 8;
+	struct harness harness;
+	struct collector_snapshot snapshot;
+	size_t distinct = 0;
+
+	current_case = "dither_keeps_samples_in_their_slots";
+	harness_init(&harness);
+	harness.masks.lane[COLLECTOR_LANE_GUI] = GUI_BIT;
+	harness.backend.status_values = values;
+	harness.backend.status_values_len = 1;
+	harness.backend.clock = &harness.clock;
+	harness.backend.record_times = true;
+
+	harness_start_seeded(&harness, 8, 1, COLLECTOR_CAP_STATUS, 0x5eed);
+	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_SNAPSHOT);
+
+	CHECK_U64(snapshot.nominal_slots, 8);
+	CHECK_U64(snapshot.attempted_slots, 8);
+	CHECK_U64(snapshot.missed_slots, 0);
+	CHECK(harness.backend.sample_time_count >= 8);
+
+	for (size_t slot = 0; slot < 8; slot++) {
+		const int64_t offset = sample_offset_in_slot(
+			&harness.backend.sample_times[slot], slot, period);
+
+		CHECK(offset >= 0);
+		CHECK(offset < period);
+
+		if (offset != 0)
+			distinct++;
+	}
+
+	// A generator that returned a constant would satisfy the bound above while
+	// leaving the phase fixed, which is the property the dither exists for.
+	CHECK(distinct >= 6);
+
+	// The window boundary is a grid fact, so the dither leaves it alone.
+	CHECK_U64((uint64_t) snapshot.window_start.tv_sec, 0);
+	CHECK_U64((uint64_t) snapshot.window_start.tv_nsec, 0);
+	CHECK_U64((uint64_t) snapshot.window_end.tv_sec, 1);
+	CHECK_U64((uint64_t) snapshot.window_end.tv_nsec, 0);
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+// Seed zero is the default, and it places every sample exactly on its grid
+// point, so a run that names no seed reproduces another exactly.
+static void case_unseeded_schedule_stays_exact(void) {
+	static const uint32_t values[] = { GUI_BIT };
+	const int64_t period = NS_PER_SEC / 8;
+	struct harness harness;
+	struct collector_snapshot snapshot;
+
+	current_case = "unseeded_schedule_stays_exact";
+	harness_init(&harness);
+	harness.masks.lane[COLLECTOR_LANE_GUI] = GUI_BIT;
+	harness.backend.status_values = values;
+	harness.backend.status_values_len = 1;
+	harness.backend.clock = &harness.clock;
+	harness.backend.record_times = true;
+
+	harness_start_seeded(&harness, 8, 1, COLLECTOR_CAP_STATUS, 0);
+	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_SNAPSHOT);
+
+	CHECK_U64(snapshot.attempted_slots, 8);
+	CHECK_U64(snapshot.missed_slots, 0);
+	CHECK(harness.backend.sample_time_count >= 8);
+
+	for (size_t slot = 0; slot < 8; slot++)
+		CHECK(sample_offset_in_slot(&harness.backend.sample_times[slot],
+			slot, period) == 0);
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+// A seed reproduces its own run: two collectors given the same seed place their
+// samples at the same offsets, which is what lets one capture be compared with
+// another.
+static void case_dither_seed_reproduces_offsets(void) {
+	static const uint32_t values[] = { GUI_BIT };
+	const int64_t period = NS_PER_SEC / 8;
+	struct timespec first[8];
+	struct harness harness;
+	struct collector_snapshot snapshot;
+
+	current_case = "dither_seed_reproduces_offsets";
+
+	for (int run = 0; run < 2; run++) {
+		harness_init(&harness);
+		harness.masks.lane[COLLECTOR_LANE_GUI] = GUI_BIT;
+		harness.backend.status_values = values;
+		harness.backend.status_values_len = 1;
+		harness.backend.clock = &harness.clock;
+		harness.backend.record_times = true;
+
+		harness_start_seeded(&harness, 8, 1, COLLECTOR_CAP_STATUS, 0xa5a5);
+		CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_SNAPSHOT);
+		CHECK(harness.backend.sample_time_count >= 8);
+
+		for (size_t slot = 0; slot < 8; slot++) {
+			const int64_t offset = sample_offset_in_slot(
+				&harness.backend.sample_times[slot], slot, period);
+
+			if (run == 0)
+				first[slot] = harness.backend.sample_times[slot];
+			else
+				CHECK(offset == sample_offset_in_slot(&first[slot],
+					slot, period));
+		}
+
+		harness_stop(&harness);
+		harness_destroy(&harness);
+	}
+}
+
+// A slot is given up when its own sample point is already behind, not when its
+// grid point is.  With a read costing half a period and an offset drawn
+// uniformly from the whole period, the grid-point rule gives up a slot whenever
+// the previous offset exceeded half a period -- around half of them -- while the
+// sample-point rule needs the offset to fall by half a period between
+// consecutive slots, which is rarer by the same factor.  A quarter of the slots
+// separates the two.
+static void case_dither_skips_only_passed_sample_points(void) {
+	static const uint32_t values[] = { GUI_BIT };
+	struct harness harness;
+	struct collector_snapshot snapshot;
+
+	uint64_t missed = 0, nominal = 0;
+
+	current_case = "dither_skips_only_passed_sample_points";
+	harness_init(&harness);
+	harness.masks.lane[COLLECTOR_LANE_GUI] = GUI_BIT;
+	harness.backend.status_values = values;
+	harness.backend.status_values_len = 1;
+	harness.backend.clock = &harness.clock;
+	harness.backend.read_delay_ns = NS_PER_SEC / 16;
+
+	harness_start_seeded(&harness, 8, 1, COLLECTOR_CAP_STATUS, 0x5eed);
+
+	// Several windows, because whether a given slot is given up depends on two
+	// consecutive offsets and one window is too short to separate the rules.
+	for (uint64_t generation = 0; generation < 6; generation++) {
+		CHECK(next_snapshot(&harness, generation, &snapshot) ==
+			COLLECTOR_WAIT_SNAPSHOT);
+		CHECK_U64(snapshot.attempted_slots + snapshot.missed_slots, 8);
+		missed += snapshot.missed_slots;
+		nominal += snapshot.nominal_slots;
+	}
+
+	CHECK(missed * 4 <= nominal);
 
 	harness_stop(&harness);
 	harness_destroy(&harness);
@@ -1016,7 +1209,7 @@ static void case_long_interval_prompt_shutdown(void) {
 	struct collector collector;
 	struct engine_masks masks;
 	struct timespec before, after;
-	const struct collector_config config = { 1, 3600 };
+	const struct collector_config config = { 1, 3600, 0 };
 
 	current_case = "long_interval_prompt_shutdown";
 	fake_backend_init(&backend);
@@ -1388,7 +1581,7 @@ static void case_rejects_incomplete_interfaces(void) {
 	struct fake_clock clock;
 	struct collector collector;
 	struct engine_masks masks;
-	const struct collector_config config = { 10, 1 };
+	const struct collector_config config = { 10, 1, 0 };
 
 	current_case = "rejects_incomplete_interfaces";
 	fake_backend_init(&backend);
@@ -1467,6 +1660,10 @@ int main(void) {
 	case_multiple_readers();
 	case_long_interval_prompt_shutdown();
 	case_rejects_impossible_configuration();
+	case_dither_keeps_samples_in_their_slots();
+	case_unseeded_schedule_stays_exact();
+	case_dither_seed_reproduces_offsets();
+	case_dither_skips_only_passed_sample_points();
 
 	printf("collector: %u checks, %u failed\n", checks_run, checks_failed);
 

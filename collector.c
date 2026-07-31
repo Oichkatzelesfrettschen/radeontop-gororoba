@@ -383,39 +383,73 @@ static void mark_finished(struct collector *collector) {
 	pthread_mutex_unlock(&collector->mutex);
 }
 
+// splitmix64, whose whole state is one 64-bit word, so the worker draws its own
+// offsets without a lock and without a libc generator whose state other threads
+// share.  A fixed seed reproduces a run exactly.
+static uint64_t dither_next(uint64_t *state) {
+	uint64_t z = (*state += 0x9e3779b97f4a7c15ULL);
+
+	z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
+	z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
+
+	return z ^ (z >> 31);
+}
+
 // The slot grid for the window in progress.  Slot `slot` is the next one due,
-// and `deadline` is its scheduled time.  The grid advances by 1e9/ticks
-// nanoseconds carrying the remainder, so a rate that does not divide a second
-// exactly still lands exactly one second later after `ticks` slots; repeatedly
-// adding a truncated period would drift instead.  The carry returns to zero
-// after `ticks` slots, so slot `nominal_slots` coincides exactly with
-// `window_end` and the grid never diverges from the window boundary.
+// `base` is its exact grid point, and `deadline` is where inside the slot the
+// sample is taken.  The grid advances by 1e9/ticks nanoseconds carrying the
+// remainder, so a rate that does not divide a second exactly still lands exactly
+// one second later after `ticks` slots; repeatedly adding a truncated period
+// would drift instead.  The carry returns to zero after `ticks` slots, so slot
+// `nominal_slots` coincides exactly with `window_end` and the grid never
+// diverges from the window boundary.
+//
+// The dither offset lies in [0, period), so `base <= deadline < next base` and
+// the deadlines stay strictly increasing.  Slot membership follows `base`
+// alone, which is what keeps a dithered run comparable with an exact one.
 struct collector_schedule {
 	struct timespec window_start;
 	struct timespec window_end;
+	struct timespec base;
 	struct timespec deadline;
 	int64_t remainder;
 	uint64_t slot;
+
+	uint64_t dither_state;
+	int64_t dither_bound; // 0 places every sample on its grid point
 };
+
+// Places the sample point for the slot `base` now names.
+static void schedule_arm(struct collector_schedule *schedule) {
+	schedule->deadline = schedule->base;
+
+	if (schedule->dither_bound > 0)
+		timespec_add_ns(&schedule->deadline,
+			(int64_t) (dither_next(&schedule->dither_state) %
+				(uint64_t) schedule->dither_bound));
+}
 
 static void schedule_step(struct collector_schedule *schedule, uint32_t ticks,
 		int64_t period_quotient, int64_t period_remainder) {
 	schedule->remainder += period_remainder;
-	timespec_add_ns(&schedule->deadline, period_quotient);
+	timespec_add_ns(&schedule->base, period_quotient);
 
 	if (schedule->remainder >= (int64_t) ticks) {
 		schedule->remainder -= (int64_t) ticks;
-		timespec_add_ns(&schedule->deadline, 1);
+		timespec_add_ns(&schedule->base, 1);
 	}
 
 	schedule->slot++;
+	schedule_arm(schedule);
 }
 
-// The deadline one slot later, without mutating the grid, so the caller can
-// test whether the slot it holds is still the due one.
-static struct timespec schedule_next_deadline(const struct collector_schedule *schedule,
+// The grid point one slot later, without mutating the grid, so the caller can
+// test whether the slot it holds is still the due one.  The test reads the grid
+// rather than the sample point, because a slot ends where the next one begins
+// whatever the dither did inside it.
+static struct timespec schedule_next_base(const struct collector_schedule *schedule,
 		uint32_t ticks, int64_t period_quotient, int64_t period_remainder) {
-	struct timespec next = schedule->deadline;
+	struct timespec next = schedule->base;
 
 	timespec_add_ns(&next, period_quotient);
 
@@ -471,7 +505,11 @@ static void *collector_worker(void *argument) {
 		return NULL;
 	}
 
-	schedule.deadline = schedule.window_start;
+	schedule.base = schedule.window_start;
+	schedule.dither_state = collector->config.dither_seed;
+	schedule.dither_bound = collector->config.dither_seed ? period_quotient : 0;
+	schedule_arm(&schedule);
+
 	schedule.window_end = schedule.window_start;
 	timespec_add_ns(&schedule.window_end,
 		(int64_t) collector->config.dumpinterval * NS_PER_SEC);
@@ -503,7 +541,7 @@ static void *collector_worker(void *argument) {
 		// ended before the read began would place a real measurement in the
 		// wrong window.  Those windows publish with no attempt of their own.
 		for (;;) {
-			const struct timespec next = schedule_next_deadline(&schedule,
+			const struct timespec next = schedule_next_base(&schedule,
 				ticks, period_quotient, period_remainder);
 
 			if (!timespec_reached(&next, &now))
@@ -540,7 +578,10 @@ static void *collector_worker(void *argument) {
 		// A read that outlasted its own period leaves later deadlines already
 		// behind.  Giving them up here is what returns the worker to the grid
 		// instead of letting wait_until fall through and start another read
-		// immediately for as long as the device stays slow.
+		// immediately for as long as the device stays slow.  The test reads the
+		// sample point rather than the grid point: a slot whose sample point is
+		// still ahead is due, and giving it up would charge the dither for a
+		// miss the device did not cause.
 		while (timespec_reached(&schedule.deadline, &after)) {
 			accumulator.missed_slots++;
 			schedule_step(&schedule, ticks, period_quotient, period_remainder);
