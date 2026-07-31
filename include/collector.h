@@ -126,6 +126,14 @@ struct collector_clock collector_monotonic_clock_ops(struct collector_monotonic_
 struct collector_config {
 	uint32_t ticks;        // nominal sample slots per second
 	uint32_t dumpinterval; // whole seconds of monotonic time per report window
+
+	// A nonzero seed offsets each sample within its own slot, so a workload
+	// periodic at a harmonic of the sampling rate meets a moving phase rather
+	// than the same one every period.  Zero keeps the exact grid, which is the
+	// default and reproduces a run exactly.  The offset stays inside the slot
+	// it belongs to, so slot boundaries, window boundaries, and the
+	// attempted-plus-missed identity hold whether or not dithering is on.
+	uint64_t dither_seed;
 };
 
 // Each measurement class counts its own reads, because a status read and a

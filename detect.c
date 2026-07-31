@@ -74,25 +74,48 @@ static int find_pci(short bus, struct pci_device *pci_dev) {
 	return (dev == NULL);
 }
 
+// A register load reaches the device on every call.  The volatile qualifier is
+// what requires that: without it the compiler may fold two loads of the same
+// mapped address into one, and a sampler that reads the same register every
+// period is exactly the shape that permits it, so a window would report a value
+// the silicon produced during an earlier one.
+static inline uint32_t mmio_read32(const void *map, unsigned offset) {
+	return *(const volatile uint32_t *)((const char *) map + offset);
+}
+
+// Each load lands inside the mapping it reads.  Both windows are sized to end
+// at their last register, so a register added above the bound or a mapping
+// length reduced below it stops the build here rather than reading past the
+// mmap at runtime.
+_Static_assert(GRBM_STATUS >= GRBM_MMAP_BASE &&
+		GRBM_STATUS - GRBM_MMAP_BASE + sizeof(uint32_t) <= MMAP_SIZE,
+		"GRBM_STATUS reads outside the mapped R600+ register window");
+_Static_assert(RBBM_STATUS + sizeof(uint32_t) <= SRBM_MMAP_SIZE,
+		"RBBM_STATUS reads outside the mapped SRBM window");
+_Static_assert(SRBM_STATUS + sizeof(uint32_t) <= SRBM_MMAP_SIZE,
+		"SRBM_STATUS reads outside the mapped SRBM window");
+_Static_assert(SRBM_STATUS2 + sizeof(uint32_t) <= SRBM_MMAP_SIZE,
+		"SRBM_STATUS2 reads outside the mapped SRBM window");
+
 static int getgrbm_pci(uint32_t *out) {
-	*out = *(uint32_t *)((const char *) area + 0x10);
+	*out = mmio_read32(area, GRBM_STATUS - GRBM_MMAP_BASE);
 	return 0;
 }
 
 // R300-class engine-busy is RBBM_STATUS (0x0E40), inside the BAR2 SRBM window,
 // so it reads from srbm_area without a second mmap.
 static int getgrbm_pci_r300(uint32_t *out) {
-	*out = *(uint32_t *)((const char *) srbm_area + RBBM_STATUS);
+	*out = mmio_read32(srbm_area, RBBM_STATUS);
 	return 0;
 }
 
 static int getsrbm_pci(uint32_t *out) {
-	*out = *(uint32_t *)((const char *) srbm_area + SRBM_STATUS);
+	*out = mmio_read32(srbm_area, SRBM_STATUS);
 	return 0;
 }
 
 static int getsrbm2_pci(uint32_t *out) {
-	*out = *(uint32_t *)((const char *) srbm_area + SRBM_STATUS2);
+	*out = mmio_read32(srbm_area, SRBM_STATUS2);
 	return 0;
 }
 
@@ -194,10 +217,10 @@ static void open_pci(struct pci_device *gpu_device) {
 		// RS482 sysfs reports BAR2 as 0xc0100000-0xc010ffff, 64 KiB, so this
 		// window would fit there; the family branch, not the size, is what
 		// keeps it away.
-		if (barsize < 0x8000 + MMAP_SIZE)
+		if (barsize < GRBM_MMAP_BASE + MMAP_SIZE)
 			die(_("Register BAR is smaller than the GRBM window"));
 
-		area = mmap(NULL, MMAP_SIZE, PROT_READ, MAP_SHARED, mem, 0x8000);
+		area = mmap(NULL, MMAP_SIZE, PROT_READ, MAP_SHARED, mem, GRBM_MMAP_BASE);
 		if (area == MAP_FAILED) die(_("mmap failed"));
 		getgrbm = getgrbm_pci;
 	}

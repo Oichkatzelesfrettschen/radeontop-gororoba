@@ -1,0 +1,7 @@
+# clangd resolves a relative include path in a configuration file against the
+# directory of the file being parsed, so the repository-root -Iinclude reaches
+# tests/include, which does not exist, and every type in collector.h reads as
+# unknown.  The path from here is one level up.
+CompileFlags:
+  Add:
+    - -I../include

@@ -5,9 +5,9 @@ The packaged binary lags the tree. `PKGBUILD` pins `_commit`
 `pkgver=1.4.r53.g49d7a7affe1a`, while `master` carries the sample-attribution
 and per-signal-validity change on top of it. An installed package therefore
 still attributes a sample taken during a long read to the window that was open
-when the read started. The pin advances once the change passes a run on RS482
-silicon, so the target's availability is the critical path for delivery, not
-only for evidence.
+when the read started, and still dates a window by the time its endpoint reads
+finished. Advancing the pin is the delivery step, and the RS482 acceptance that
+gates it has passed.
 
 Items below are grouped by the gate each one waits on. Ordering inside a group
 carries no dependency; every item is independently landable.
@@ -37,95 +37,135 @@ restate one is asking for something narrower.
 - The dump serializes per-signal health and gates each clock on its own signal.
   A consumer that aggregates across runs still weights each window by its own
   denominator, because the denominators differ window to window.
-- The unit suite runs 551 checks against an injected backend and a virtual
-  clock, under gcc, clang, ASan/UBSan/LSan, and ThreadSanitizer. The two
-  scheduler properties carry negative controls: mutating either schedule advance
-  makes the suite fail.
-- `.clangd` supplies the include path and standard the Makefile passes, so
-  editor diagnostics match the build.
+- Every MMIO register load goes through `mmio_read32`, which reads through a
+  `const volatile uint32_t *`, so the source requires a fresh device access
+  rather than relying on the indirect-call structure to force one.
+  `_Static_assert` proves each offset plus its access width lands inside the
+  mapping it reads.
+- `--dither-seed N` offsets each sample inside its own slot, so a workload
+  periodic at a harmonic of the sampling rate meets a moving phase. The offset
+  lies in `[0, period)` and slot membership follows the grid, so slot count,
+  window boundaries, and the attempted-plus-missed identity are unchanged.
+  Omitting the flag keeps the exact grid, which is what makes two runs of one
+  workload directly comparable.
+- The unit suite runs 634 checks against an injected backend and a virtual
+  clock, under gcc, clang, ASan/UBSan/LSan, and ThreadSanitizer. Five scheduler
+  properties carry negative controls: mutating either schedule advance, giving
+  up a slot whose sample point is still ahead, letting the dither exceed its
+  slot, and discarding the drawn offset each make the suite fail.
+- `.clangd` at the repository root and under `tests/` supply the include paths,
+  the language, and the standard the Makefile passes, so editor diagnostics
+  match the build.
+
+## Silicon evidence carried
+
+Two runs on the RS482 target (PCI `1002:5974`) compared a control worktree at
+the pre-change merge with a test worktree at `master`. Reads stayed confined to
+`RBBM_STATUS` (`0x0E40`) through the BAR2 `resourceN` window, and the boot
+identifier was identical at the start and end of both runs, so the K8
+northbridge watchdog (`D18F3x44`, AMD BKDG #32559) was not disturbed.
+
+- Idle reports every lane at 0.00% with 100% coverage and no missed slot at 120
+  samples per second, at a read cost of 2 to 50 microseconds.
+- Under a sustained `glmark2-es2` texture load the GUI, EE, and PA lanes report
+  87% to 100% busy and the CP lane 79% to 100%, with the VGT lane clear. Control
+  and test agree, interleaved twice against one load held alive across every
+  pass.
+- `attempted + missed == nominal` holds in every window at 120, 500, and 1000
+  samples per second, including windows at 1000 that give up 69 to 96 slots.
+- Wake-up lateness reaches 0.5 to 2.6 milliseconds at every rate while a read
+  costs at most 59 microseconds, so the misses come from the wake-up arriving
+  after the next grid point rather than from read latency. That exercises the
+  pre-read skip on silicon and leaves the post-read skip unexercised.
+- Publication precedes the scheduled window end by about one period at each rate
+  -- 8.25 milliseconds at 120, 1.91 at 500, 0.71 to 0.92 at 1000 -- which is
+  where the last slot of a window sits.
+- The dump timestamp's sub-second offset varies by 0 and 1 microsecond across
+  eight windows on the test binary against 607 and 679 microseconds on the
+  control, which is the `scheduled_end_realtime` derivation removing the
+  endpoint-read lag from the window's date.
+- Both scheduler negative controls fail on the target with the same counts they
+  produce on the development host, so the calibration travels with the run.
+- SIGINT closes the dump and exits in 64 milliseconds, SIGTERM exits cleanly,
+  and a dump directed at `/dev/full` exits nonzero.
+
+A third run compared the accepted tree with the volatile MMIO reads and the
+dithered schedule on top of it, against one load held alive across every pass.
+
+- The volatile reads change neither figure. Mean GUI busy is 99.90 and 99.58
+  percent on the control against 99.48 and 99.06 on the test, and the worst read
+  cost is 86 and 47 microseconds on the control against 9 and 6 on the test.
+  Both are within the spread the interleaved control passes show between
+  themselves, so the fold the qualifier forbids was not happening at this
+  optimization level and the qualifier costs nothing.
+- A dithered pass and an exact pass agree on the duty figure at 120 samples per
+  second: 99.21 and 98.54 percent seeded against 99.17 unseeded.
+- Dithering costs coverage, because a sample placed late in its slot has less
+  room before the slot ends. At 120 samples per second the seeded runs give up
+  76 and 70 slots of 960 while the unseeded run gives up none. At 1000 the
+  unseeded run gives up 735 of 5000 and the seeded run 1586, and the worst read
+  cost rises from 48 to 588 microseconds. The duty figure separates there too,
+  95.63 percent against 98.67.
+- `attempted + missed == nominal` holds in every window of every pass, seeded
+  and unseeded, at both rates.
+
+Dithering is therefore usable where the period is large against the wake-up
+lateness the host produces, and it is not usable at rates where the two are
+comparable. The per-window coverage figure reports the cost, so a capture
+carries its own evidence either way.
+
+The first run's load comparison is void: it drove the load with a `glmark2-es2`
+invocation that exits after one benchmark, so the load had ended before the test
+binary ran and its windows recorded an idle device. The second run holds the
+load with `--run-forever` and proves it alive on both sides of every device
+pass. A load pass that does not record the load's liveness cannot distinguish an
+idle device from a missing load.
+
+## Ready now
+
+1. Advance `_commit` to the accepted merge, recompute `pkgver` as
+   `1.4.rN.g<abbrev-object-id>`, and reset `pkgrel` to 1. The pinned commit is
+   reachable from `master` before it enters the recipe.
+2. Prove the recipe's literal `pkgver` equals what `pkgver()` derives, with
+   `makepkg --nobuild && git diff --exit-code PKGBUILD`.
+3. A clean `makepkg` from a directory outside the checkout, the packaged
+   binary's `--version` equal to `pkgver`, and a second clean build producing a
+   byte-identical artifact at the pinned `SOURCE_DATE_EPOCH`.
+4. Branch protection on `master`, which the GitHub API reports absent, so a
+   merge can bypass the gates the workflows run. The required checks are the
+   six compile-matrix jobs `minimal / gcc`, `minimal / clang`, `radeon / gcc`,
+   `radeon / clang`, `full / gcc`, `full / clang`, plus `static analysis`,
+   `collector integrity`, `command-line contracts`, and `arch package`.
+5. The administrator-bypass posture, which is a policy choice rather than a
+   defect: enforcing the checks for administrators closes the bypass and also
+   removes the escape hatch for a broken required check.
+6. The `late` counter reports every wake-up on this host at 120 and 500 samples
+   per second, because a condition-variable wake arrives after its deadline
+   essentially always. A count that saturates carries no signal; `max_lateness`
+   carries it. Either report lateness as a distribution or state the counter's
+   meaning where it is rendered.
+
+7. The dither draws from the whole period, so an offset near the top of the
+   range leaves a sample less slack than the host's wake-up lateness consumes,
+   and the slot is given up. A bound below the period trades phase coverage for
+   slot coverage, and the exchange rate is measurable: sweep the bound against a
+   fixed load and rate, and read the coverage figure the window already reports.
 
 ## Gated on a run against RS482 silicon
 
-The validation table requires a read-path or gauge change to carry a build plus
-a run on the affected family. These items need the target powered on. Reads stay
-confined to `RBBM_STATUS` (`0x0E40`) through the BAR2 `resourceN` window, the
-offset carrying a retained same-boot safe-read observation, because a wrong MMIO
-offset on this platform is a cold power cycle (K8 northbridge watchdog,
-`D18F3x44`, AMD BKDG #32559). The boot identifier is captured around every
-device pass.
-
-1. Acceptance of the sample-attribution change: a control worktree at the
-   pre-change merge and a test worktree at `master`, each run at idle and under
-   a sustained textured fill. An all-zero idle reading is equally consistent
-   with a broken read path, so every idle reading is paired with a load.
-2. A rate ladder at 120, 500, and 1000 samples per second under load, recording
-   `attempted`, `missed`, `late`, `maxlate`, and `maxread` per window. The
-   prediction is `attempted + missed == nominal` at every rate, with `missed`
-   rising only where the read latency exceeds the period.
-3. Grid-offset stability: the published sub-second offset holds window over
-   window. A relative sleep drifts forward monotonically by the read time each
-   period, so a drifting offset refutes the absolute grid.
-4. The negative controls re-run on the target, so the calibration that proves
-   the scheduler tests detect the defect travels with the run rather than being
-   asserted from the development host.
-5. Shutdown paths on the target binary: SIGINT, SIGTERM, and the line limit each
-   close the dump and exit within a bounded interval.
-6. Output-failure propagation: a dump directed at `/dev/full` exits nonzero.
-7. The permanent privilege drop, which needs a temporarily installed
+8. The permanent privilege drop, which needs a temporarily installed
    setuid-root binary invoked as the ordinary user. A `sudo` run cannot exercise
    it, because the real uid is already 0 and `Uid: 1000 0 0 0` on sudo's own
    process reads like a failed drop.
-8. The post-read deadline skip has virtual-clock coverage only. No BAR read on
-   this part has stalled in any run to date, so the branch is unexercised on
-   silicon and its 250 ms synthetic delay stands in for a latency never
-   observed. The rate ladder at 1000 samples per second is the closest available
-   falsifier.
-
-## Gated on the acceptance above passing
-
-9. Advance `_commit` to the accepted merge, recompute `pkgver` as
-   `1.4.rN.g<abbrev-object-id>`, and reset `pkgrel` to 1. The pinned commit is
-   reachable from `master` before it enters the recipe.
-10. Prove the recipe's literal `pkgver` equals what `pkgver()` derives, with
-    `makepkg --nobuild && git diff --exit-code PKGBUILD`.
-11. A clean `makepkg` from a directory outside the checkout, the packaged
-    binary's `--version` equal to `pkgver`, and a second clean build producing a
-    byte-identical artifact at the pinned `SOURCE_DATE_EPOCH`.
-
-## Ready to author, merge gated on a family run
-
-The source change is writable now; the pass claim waits on item 1's run,
-because these touch the read path.
-
-12. An `mmio_read32()` helper taking a `const volatile uint32_t *`, so the
-    source requires a fresh device read rather than relying on the indirect-call
-    structure to force one.
-13. The four MMIO loads in `detect.c` -- `getgrbm_pci`, `getgrbm_pci_r300`,
-    `getsrbm_pci`, and `getsrbm2_pci` -- routed through that helper.
-14. `_Static_assert` proofs that each register offset plus its access width
-    lands inside the mapping it reads: `RBBM_STATUS`, `SRBM_STATUS`, and
-    `SRBM_STATUS2` within `SRBM_MMAP_SIZE`, and the `0x10` offset within
-    `MMAP_SIZE`.
-15. Correct the file comment in `collector_backend.c` stating that the MMIO
-    readers cannot fail. The load always yields a word and reports no error, and
-    a removed device answers all-ones, so the classification rests on the return
-    convention rather than on device presence.
-16. Dithered or randomized deadlines, so a workload periodic at a harmonic of
-    the sampling rate is not sampled at a fixed phase. The dither preserves
-    `attempted + missed == nominal`, which is what makes a dithered window still
-    comparable with an undithered one.
+9. The post-read deadline skip, which has virtual-clock coverage only. The
+   worst BAR read observed costs 588 microseconds against a 1000 microsecond
+   period, and every miss recorded so far comes from wake-up lateness rather
+   than read cost, so the branch stays unexercised on silicon. A rate whose
+   period falls under the observed read cost is the available falsifier.
 
 ## Ready without silicon
 
-17. Branch protection on `master`, which the GitHub API reports absent, so a
-    merge can bypass the gates the workflows run. The required checks are the
-    six compile-matrix jobs `minimal / gcc`, `minimal / clang`, `radeon / gcc`,
-    `radeon / clang`, `full / gcc`, `full / clang`, plus `static analysis`,
-    `collector integrity`, `command-line contracts`, and `arch package`.
-18. The administrator-bypass posture, which is a policy choice rather than a
-    defect: enforcing the checks for administrators closes the bypass and also
-    removes the escape hatch for a broken required check.
-19. `makerepropkg` rebuilds a package against the `.BUILDINFO` package set from
+10. `makerepropkg` rebuilds a package against the `.BUILDINFO` package set from
     the Arch Linux Archive and needs a privileged chroot plus exact archive
     resolution the container job cannot supply. It reads `not run` with that
     reason, and the workflow proves build-to-build determinism at a pinned
@@ -139,7 +179,7 @@ items constrain. Retained probes, result bundles, and the verdict assigned to a
 target-silicon run live in `steinmarder-r300` under `src/re/r300/`, and this
 repository carries the citation.
 
-20. The `libdrm_amdgpu` and radeon-ioctl read paths stay unexercised on silicon,
+11. The `libdrm_amdgpu` and radeon-ioctl read paths stay unexercised on silicon,
     because no amdgpu or R600 part is reachable from either available host.
     Their `-errno` handling is reasoned from API convention only, which places
     it at rank 5 until a part answers.

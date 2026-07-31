@@ -44,6 +44,10 @@ enum {
 	RBBM_STATUS = 0x0e40,
 	SRBM_STATUS = 0xe50,
 	SRBM_STATUS2 = 0xe4c,
+	// The R600+ MMIO path maps a window starting at GRBM_MMAP_BASE, so
+	// GRBM_STATUS reads at GRBM_STATUS - GRBM_MMAP_BASE within it.  The
+	// R300-class and SRBM registers read from a window based at zero.
+	GRBM_MMAP_BASE = 0x8000,
 	MMAP_SIZE = 0x14,
 	SRBM_MMAP_SIZE = 0xe54,
 	VENDOR_AMD = 0x1002
