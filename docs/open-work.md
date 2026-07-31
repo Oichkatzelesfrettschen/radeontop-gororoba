@@ -89,6 +89,31 @@ northbridge watchdog (`D18F3x44`, AMD BKDG #32559) was not disturbed.
 - SIGINT closes the dump and exits in 64 milliseconds, SIGTERM exits cleanly,
   and a dump directed at `/dev/full` exits nonzero.
 
+A third run compared the accepted tree with the volatile MMIO reads and the
+dithered schedule on top of it, against one load held alive across every pass.
+
+- The volatile reads change neither figure. Mean GUI busy is 99.90 and 99.58
+  percent on the control against 99.48 and 99.06 on the test, and the worst read
+  cost is 86 and 47 microseconds on the control against 9 and 6 on the test.
+  Both are within the spread the interleaved control passes show between
+  themselves, so the fold the qualifier forbids was not happening at this
+  optimization level and the qualifier costs nothing.
+- A dithered pass and an exact pass agree on the duty figure at 120 samples per
+  second: 99.21 and 98.54 percent seeded against 99.17 unseeded.
+- Dithering costs coverage, because a sample placed late in its slot has less
+  room before the slot ends. At 120 samples per second the seeded runs give up
+  76 and 70 slots of 960 while the unseeded run gives up none. At 1000 the
+  unseeded run gives up 735 of 5000 and the seeded run 1586, and the worst read
+  cost rises from 48 to 588 microseconds. The duty figure separates there too,
+  95.63 percent against 98.67.
+- `attempted + missed == nominal` holds in every window of every pass, seeded
+  and unseeded, at both rates.
+
+Dithering is therefore usable where the period is large against the wake-up
+lateness the host produces, and it is not usable at rates where the two are
+comparable. The per-window coverage figure reports the cost, so a capture
+carries its own evidence either way.
+
 The first run's load comparison is void: it drove the load with a `glmark2-es2`
 invocation that exits after one benchmark, so the load had ended before the test
 binary ran and its windows recorded an idle device. The second run holds the
@@ -120,28 +145,27 @@ idle device from a missing load.
    carries it. Either report lateness as a distribution or state the counter's
    meaning where it is rendered.
 
+7. The dither draws from the whole period, so an offset near the top of the
+   range leaves a sample less slack than the host's wake-up lateness consumes,
+   and the slot is given up. A bound below the period trades phase coverage for
+   slot coverage, and the exchange rate is measurable: sweep the bound against a
+   fixed load and rate, and read the coverage figure the window already reports.
+
 ## Gated on a run against RS482 silicon
 
-7. Acceptance of the volatile MMIO reads on the affected family, which the
-   validation table requires of a read-path change. The reads are the same
-   registers at the same offsets, so the falsifier is a change in the busy
-   figures or the read cost against the runs recorded above.
-8. Acceptance of the dithered schedule: a seeded run and an unseeded run against
-   one steady load agree on the duty figure within sampling error, and the
-   seeded run's `attempted + missed` still equals `nominal`.
-9. The permanent privilege drop, which needs a temporarily installed
+8. The permanent privilege drop, which needs a temporarily installed
    setuid-root binary invoked as the ordinary user. A `sudo` run cannot exercise
    it, because the real uid is already 0 and `Uid: 1000 0 0 0` on sudo's own
    process reads like a failed drop.
-10. The post-read deadline skip, which has virtual-clock coverage only. No BAR
-    read on this part has cost more than 59 microseconds against a 1000
-    microsecond period, so the branch stays unexercised on silicon. A rate above
-    16000 samples per second would bring the period under the observed read
-    cost, which is the available falsifier.
+9. The post-read deadline skip, which has virtual-clock coverage only. The
+   worst BAR read observed costs 588 microseconds against a 1000 microsecond
+   period, and every miss recorded so far comes from wake-up lateness rather
+   than read cost, so the branch stays unexercised on silicon. A rate whose
+   period falls under the observed read cost is the available falsifier.
 
 ## Ready without silicon
 
-11. `makerepropkg` rebuilds a package against the `.BUILDINFO` package set from
+10. `makerepropkg` rebuilds a package against the `.BUILDINFO` package set from
     the Arch Linux Archive and needs a privileged chroot plus exact archive
     resolution the container job cannot supply. It reads `not run` with that
     reason, and the workflow proves build-to-build determinism at a pinned
@@ -155,7 +179,7 @@ items constrain. Retained probes, result bundles, and the verdict assigned to a
 target-silicon run live in `steinmarder-r300` under `src/re/r300/`, and this
 repository carries the citation.
 
-12. The `libdrm_amdgpu` and radeon-ioctl read paths stay unexercised on silicon,
+11. The `libdrm_amdgpu` and radeon-ioctl read paths stay unexercised on silicon,
     because no amdgpu or R600 part is reachable from either available host.
     Their `-errno` handling is reasoned from API convention only, which places
     it at rank 5 until a part answers.
