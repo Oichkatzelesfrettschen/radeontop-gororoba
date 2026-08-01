@@ -1,13 +1,10 @@
 # Open work
 
-The packaged binary lags the tree. `PKGBUILD` pins `_commit`
-`49d7a7affe1a8b9a8da83733aca4f0c65daefdd0` and derives
-`pkgver=1.4.r53.g49d7a7affe1a`, while `master` carries the sample-attribution
-and per-signal-validity change on top of it. An installed package therefore
-still attributes a sample taken during a long read to the window that was open
-when the read started, and still dates a window by the time its endpoint reads
-finished. Advancing the pin is the delivery step, and the RS482 acceptance that
-gates it has passed.
+The packaged binary carries the tree. `PKGBUILD` pins the merge that holds the
+sample attribution fix, the volatile MMIO reads, and the dithered sample phase,
+each of which passed acceptance on RS482 silicon. `master` requires the ten
+workflow checks of every merge, administrators included, so the gates the
+workflows run are a boundary rather than a convention.
 
 Items below are grouped by the gate each one waits on. Ordering inside a group
 carries no dependency; every item is independently landable.
@@ -123,29 +120,12 @@ idle device from a missing load.
 
 ## Ready now
 
-1. Advance `_commit` to the accepted merge, recompute `pkgver` as
-   `1.4.rN.g<abbrev-object-id>`, and reset `pkgrel` to 1. The pinned commit is
-   reachable from `master` before it enters the recipe.
-2. Prove the recipe's literal `pkgver` equals what `pkgver()` derives, with
-   `makepkg --nobuild && git diff --exit-code PKGBUILD`.
-3. A clean `makepkg` from a directory outside the checkout, the packaged
-   binary's `--version` equal to `pkgver`, and a second clean build producing a
-   byte-identical artifact at the pinned `SOURCE_DATE_EPOCH`.
-4. Branch protection on `master`, which the GitHub API reports absent, so a
-   merge can bypass the gates the workflows run. The required checks are the
-   six compile-matrix jobs `minimal / gcc`, `minimal / clang`, `radeon / gcc`,
-   `radeon / clang`, `full / gcc`, `full / clang`, plus `static analysis`,
-   `collector integrity`, `command-line contracts`, and `arch package`.
-5. The administrator-bypass posture, which is a policy choice rather than a
-   defect: enforcing the checks for administrators closes the bypass and also
-   removes the escape hatch for a broken required check.
-6. The `late` counter reports every wake-up on this host at 120 and 500 samples
+1. The `late` counter reports every wake-up on this host at 120 and 500 samples
    per second, because a condition-variable wake arrives after its deadline
    essentially always. A count that saturates carries no signal; `max_lateness`
    carries it. Either report lateness as a distribution or state the counter's
    meaning where it is rendered.
-
-7. The dither draws from the whole period, so an offset near the top of the
+2. The dither draws from the whole period, so an offset near the top of the
    range leaves a sample less slack than the host's wake-up lateness consumes,
    and the slot is given up. A bound below the period trades phase coverage for
    slot coverage, and the exchange rate is measurable: sweep the bound against a
@@ -153,11 +133,11 @@ idle device from a missing load.
 
 ## Gated on a run against RS482 silicon
 
-8. The permanent privilege drop, which needs a temporarily installed
+3. The permanent privilege drop, which needs a temporarily installed
    setuid-root binary invoked as the ordinary user. A `sudo` run cannot exercise
    it, because the real uid is already 0 and `Uid: 1000 0 0 0` on sudo's own
    process reads like a failed drop.
-9. The post-read deadline skip, which has virtual-clock coverage only. The
+4. The post-read deadline skip, which has virtual-clock coverage only. The
    worst BAR read observed costs 588 microseconds against a 1000 microsecond
    period, and every miss recorded so far comes from wake-up lateness rather
    than read cost, so the branch stays unexercised on silicon. A rate whose
@@ -165,11 +145,11 @@ idle device from a missing load.
 
 ## Ready without silicon
 
-10. `makerepropkg` rebuilds a package against the `.BUILDINFO` package set from
-    the Arch Linux Archive and needs a privileged chroot plus exact archive
-    resolution the container job cannot supply. It reads `not run` with that
-    reason, and the workflow proves build-to-build determinism at a pinned
-    `SOURCE_DATE_EPOCH` instead.
+5. `makerepropkg` rebuilds a package against the `.BUILDINFO` package set from
+   the Arch Linux Archive and needs a privileged chroot plus exact archive
+   resolution the container job cannot supply. It reads `not run` with that
+   reason, and the workflow proves build-to-build determinism at a pinned
+   `SOURCE_DATE_EPOCH` instead.
 
 ## Carried elsewhere
 
@@ -179,7 +159,7 @@ items constrain. Retained probes, result bundles, and the verdict assigned to a
 target-silicon run live in `steinmarder-r300` under `src/re/r300/`, and this
 repository carries the citation.
 
-11. The `libdrm_amdgpu` and radeon-ioctl read paths stay unexercised on silicon,
-    because no amdgpu or R600 part is reachable from either available host.
-    Their `-errno` handling is reasoned from API convention only, which places
-    it at rank 5 until a part answers.
+6. The `libdrm_amdgpu` and radeon-ioctl read paths stay unexercised on silicon,
+   because no amdgpu or R600 part is reachable from either available host.
+   Their `-errno` handling is reasoned from API convention only, which places
+   it at rank 5 until a part answers.
