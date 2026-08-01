@@ -72,8 +72,8 @@ northbridge watchdog (`D18F3x44`, AMD BKDG #32559) was not disturbed.
   samples per second, including windows at 1000 that give up 69 to 96 slots.
 - Wake-up lateness reaches 0.5 to 2.6 milliseconds at every rate while a read
   costs at most 59 microseconds, so the misses come from the wake-up arriving
-  after the next grid point rather than from read latency. That exercises the
-  pre-read skip on silicon and leaves the post-read skip unexercised.
+  after the next grid point rather than from read latency, which is the pre-read
+  skip. The fourth run below reaches the post-read skip by raising the rate.
 - Publication precedes the scheduled window end by about one period at each rate
   -- 8.25 milliseconds at 120, 1.91 at 500, 0.71 to 0.92 at 1000 -- which is
   where the last slot of a window sits.
@@ -100,9 +100,10 @@ dithered schedule on top of it, against one load held alive across every pass.
 - Dithering costs coverage, because a sample placed late in its slot has less
   room before the slot ends. At 120 samples per second the seeded runs give up
   76 and 70 slots of 960 while the unseeded run gives up none. At 1000 the
-  unseeded run gives up 735 of 5000 and the seeded run 1586, and the worst read
-  cost rises from 48 to 588 microseconds. The duty figure separates there too,
-  95.63 percent against 98.67.
+  unseeded run gives up 735 of 5000 and the seeded run 1586, and the duty figure
+  separates to 95.63 percent against 98.67. The ratio holds as the rate climbs:
+  at 2000, 4000, and 8000 samples per second the seeded runs give up 2195, 6673,
+  and 18825 slots against 568, 2093, and 6786 unseeded.
 - `attempted + missed == nominal` holds in every window of every pass, seeded
   and unseeded, at both rates.
 
@@ -110,6 +111,29 @@ Dithering is therefore usable where the period is large against the wake-up
 lateness the host produces, and it is not usable at rates where the two are
 comparable. The per-window coverage figure reports the cost, so a capture
 carries its own evidence either way.
+
+A fourth run drove the rate up until the slot period fell under the read cost,
+which is the falsifier for the post-read deadline skip. `max_read_latency_ns` is
+measured inside `sample_once`, bracketing the backend calls alone, so a window
+reporting a read cost above its own period had deadlines behind it when the read
+returned.
+
+- The BAR read cost has a long tail on this part under load, independent of the
+  schedule. Worst costs per pass run 341 to 913 microseconds across 1000, 2000,
+  4000, and 8000 samples per second, seeded and unseeded alike, against typical
+  costs under 60. An earlier reading that paired a 588 microsecond cost with a
+  seeded pass reflects that tail rather than the dither, which changes when a
+  sample is taken and not how long the load takes.
+- At 4000 samples per second, a 250 microsecond period, 4 of 5 unseeded windows
+  and 2 of 5 seeded windows report a read cost above their own period, so the
+  post-read deadline skip fires on silicon rather than under the virtual clock
+  alone.
+- `attempted + missed == nominal` holds in every window up to 8000 samples per
+  second, where a seeded window gives up 47 percent of its slots.
+
+The read costs recorded here come from a later boot than the three runs above,
+and the same rates report costs an order of magnitude lower there, so the tail
+is a property of a boot's conditions rather than a fixed figure for the part.
 
 The first run's load comparison is void: it drove the load with a `glmark2-es2`
 invocation that exits after one benchmark, so the load had ended before the test
@@ -137,11 +161,13 @@ idle device from a missing load.
    setuid-root binary invoked as the ordinary user. A `sudo` run cannot exercise
    it, because the real uid is already 0 and `Uid: 1000 0 0 0` on sudo's own
    process reads like a failed drop.
-4. The post-read deadline skip, which has virtual-clock coverage only. The
-   worst BAR read observed costs 588 microseconds against a 1000 microsecond
-   period, and every miss recorded so far comes from wake-up lateness rather
-   than read cost, so the branch stays unexercised on silicon. A rate whose
-   period falls under the observed read cost is the available falsifier.
+4. The read-cost tail itself. Costs of 341 to 913 microseconds appear against
+   typical costs under 60 on the same pass, and they vary by an order of
+   magnitude between boots, so the cause lies outside the sampler. A read
+   bracketed by `sample_once` covers the MMIO load and the scheduling around it,
+   so preemption during a read and a slow BAR access are not yet separated. The
+   discriminator is a run pinned to one CPU with the sampler at a real-time
+   policy: a tail that survives both is the device.
 
 ## Ready without silicon
 
