@@ -183,11 +183,6 @@ int dumpdata(struct collector *collector, const struct engine_masks *masks,
 		const struct radeontop_capture_metadata *metadata,
 		const char file[], const unsigned int limit, const unsigned char bus) {
 
-#ifdef ENABLE_NLS
-	// This is a data format, so disable decimal point localization
-	setlocale(LC_NUMERIC, "C");
-#endif
-
 	fprintf(stderr, _("Dumping to %s, "), file);
 
 	if (limit)
@@ -242,11 +237,14 @@ int dumpdata(struct collector *collector, const struct engine_masks *masks,
 	unsigned int printed = 0;
 	int status = 0;
 	const char *end_reason = "signal";
-	struct collector_snapshot terminal_snapshot;
-	bool terminal_snapshot_valid = false;
+	struct collector_snapshot collector_snapshot;
+	bool collector_snapshot_valid = false;
+	struct collector_terminal terminal;
+	bool terminal_valid = false;
 
 	while (!terminate_requested) {
 		struct collector_snapshot snapshot;
+		struct collector_terminal event_terminal;
 		struct timespec deadline;
 
 		// A bounded wait is what lets the signal flag be observed; the
@@ -263,24 +261,32 @@ int dumpdata(struct collector *collector, const struct engine_masks *masks,
 		}
 
 		const int wait = collector_wait_next_contiguous(collector, last_generation,
-			&deadline, &snapshot);
+			&deadline, &snapshot, &event_terminal);
 
 		if (wait == COLLECTOR_WAIT_TIMEOUT)
 			continue;
 
 		if (wait == COLLECTOR_WAIT_FATAL) {
-			fputs(_("The collector lost the device, stopping.\n"), stderr);
-			end_reason = "collector-fatal";
-			terminal_snapshot = snapshot;
-			terminal_snapshot_valid = true;
+			terminal = event_terminal;
+			terminal_valid = true;
+			if (terminal.cause == COLLECTOR_TERMINAL_DEVICE_READ) {
+				fputs(_("The collector lost the device, stopping.\n"), stderr);
+				end_reason = "collector-device-error";
+			} else if (collector_terminal_cause_is_clock(terminal.cause)) {
+				fputs(_("The collector clock failed, stopping.\n"), stderr);
+				end_reason = "collector-clock-error";
+			} else {
+				fputs(_("The collector schedule failed, stopping.\n"), stderr);
+				end_reason = "collector-schedule-error";
+			}
 			status = 1;
 			break;
 		}
 
 		if (wait == COLLECTOR_WAIT_FINISHED) {
 			end_reason = "collector-finished";
-			terminal_snapshot = snapshot;
-			terminal_snapshot_valid = true;
+			collector_snapshot = snapshot;
+			collector_snapshot_valid = true;
 			break;
 		}
 		if (wait == COLLECTOR_WAIT_ERROR) {
@@ -293,8 +299,8 @@ int dumpdata(struct collector *collector, const struct engine_masks *masks,
 			fprintf(stderr,
 				_("The capture lost a completed measurement window, stopping.\n"));
 			end_reason = "generation-gap";
-			terminal_snapshot = snapshot;
-			terminal_snapshot_valid = true;
+			collector_snapshot = snapshot;
+			collector_snapshot_valid = true;
 			status = 1;
 			break;
 		}
@@ -317,6 +323,8 @@ int dumpdata(struct collector *collector, const struct engine_masks *masks,
 		}
 
 		last_generation = snapshot.generation;
+		collector_snapshot = snapshot;
+		collector_snapshot_valid = true;
 		printed++;
 		if (limit && printed >= limit) {
 			end_reason = "line-limit";
@@ -326,7 +334,8 @@ int dumpdata(struct collector *collector, const struct engine_masks *masks,
 
 	if (!ferror(f) && radeontop_capture_write_run_end(f, metadata->run_id,
 			end_reason, status, last_generation, printed,
-			terminal_snapshot_valid ? &terminal_snapshot : NULL))
+			collector_snapshot_valid ? &collector_snapshot : NULL,
+			terminal_valid ? &terminal : NULL))
 		status = 1;
 	if (radeontop_capture_sync_stream(f))
 		status = 1;

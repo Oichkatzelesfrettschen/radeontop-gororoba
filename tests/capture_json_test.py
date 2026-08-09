@@ -25,13 +25,9 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
-def main() -> int:
-    if len(sys.argv) != 2:
-        print(f"usage: {sys.argv[0]} CAPTURE_TEST", file=sys.stderr)
-        return 2
-
+def parse_fixture(capture_test: str, option: str) -> tuple[dict, dict, dict]:
     result = subprocess.run(
-        [sys.argv[1], "--emit-json-fixture"],
+        [capture_test, option],
         check=True,
         capture_output=True,
         text=True,
@@ -40,15 +36,30 @@ def main() -> int:
     require(len(lines) == 3, "fixture emits exactly three records")
 
     header_prefix = "# radeontop_capture_v1 "
-    evidence_marker = ", evidence_v1 "
-    end_prefix = "# radeontop_run_end_v1 "
+    evidence_marker = ", evidence_v2 "
+    end_prefix = "# radeontop_run_end_v2 "
     require(lines[0].startswith(header_prefix), "capture header prefix")
     require(evidence_marker in lines[1], "evidence marker")
     require(lines[2].startswith(end_prefix), "run-end prefix")
 
-    header = json.loads(lines[0][len(header_prefix) :])
-    evidence = json.loads(lines[1].split(evidence_marker, 1)[1])
-    run_end = json.loads(lines[2][len(end_prefix) :])
+    return (
+        json.loads(lines[0][len(header_prefix) :]),
+        json.loads(lines[1].split(evidence_marker, 1)[1]),
+        json.loads(lines[2][len(end_prefix) :]),
+    )
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        print(f"usage: {sys.argv[0]} CAPTURE_TEST", file=sys.stderr)
+        return 2
+
+    header, evidence, run_end = parse_fixture(
+        sys.argv[1], "--emit-json-fixture"
+    )
+    clock_header, clock_evidence, clock_run_end = parse_fixture(
+        sys.argv[1], "--emit-clock-json-fixture"
+    )
 
     require(header["build"]["source_state"] == "clean", "source state")
     require(len(header["build"]["source_commit"]) in (40, 64),
@@ -85,17 +96,32 @@ def main() -> int:
     }, "failed VRAM endpoint")
     require(evidence["endpoints"]["gtt"]["supported"] is False,
             "unsupported GTT endpoint")
-    require(evidence["terminal"] == {"fatal": True, "read_result": 2},
-            "terminal cause")
+    require("terminal" not in evidence, "measurement omits terminal state")
     require(run_end["run_id"] == header["run_id"], "run-end identity link")
-    require(run_end["reason"] == "collector-fatal", "run-end reason")
+    require(run_end["reason"] == "collector-device-error", "run-end reason")
     require(run_end["logical_complete"] is False, "fatal run completeness")
     require(run_end["logical_status"] == 1, "fatal logical status")
     require(run_end["collector"] == {
-        "generation": 0,
-        "fatal": True,
-        "read_result": 2,
+        "latest_generation": 0,
+        "terminal": {
+            "after_generation": 0,
+            "cause": "device-read",
+            "read_result": 2,
+        },
     }, "fatal-before-consumer terminal record")
+    require(clock_header["run_id"] == header["run_id"],
+            "clock fixture run identity")
+    require(clock_evidence == evidence, "terminal cause does not mutate evidence")
+    require(clock_run_end["reason"] == "collector-clock-error",
+            "clock run-end reason")
+    require(clock_run_end["collector"] == {
+        "latest_generation": 0,
+        "terminal": {
+            "after_generation": 0,
+            "cause": "clock-publication-monotonic",
+            "read_result": None,
+        },
+    }, "clock terminal record")
 
     print("capture JSON: parsed schema and state distinctions")
     return 0

@@ -99,13 +99,15 @@ struct collector_backend {
 	int (*read_gtt)(void *context, uint64_t *value);
 };
 
-// wait_until returns when the deadline passes or when wake() interrupts it, and
-// the caller re-tests its stop predicate either way.  Production binds wake to
-// a CLOCK_MONOTONIC condition variable; a test binds it to a virtual clock that
-// advances without waiting.
+// now and wait_until own monotonic scheduling; realtime_now supplies the wall
+// stamp paired with the monotonic publication stamp.  wait_until returns when
+// the deadline passes or wake() interrupts it, and the caller re-tests its stop
+// predicate either way.  Production binds wake to a CLOCK_MONOTONIC condition
+// variable; a test binds every clock operation to virtual time.
 struct collector_clock {
 	void *context;
 	int (*now)(void *context, struct timespec *ts);
+	int (*realtime_now)(void *context, struct timespec *ts);
 	int (*wait_until)(void *context, const struct timespec *deadline);
 	void (*wake)(void *context);
 };
@@ -159,6 +161,27 @@ struct collector_lane_bounds {
 	double unconditional_upper;
 };
 
+// Terminal state belongs to the worker run rather than to a completed
+// measurement window.  after_generation binds the cause to the last immutable
+// generation that committed before the worker stopped.
+enum collector_terminal_cause {
+	COLLECTOR_TERMINAL_NONE = 0,
+	COLLECTOR_TERMINAL_DEVICE_READ,
+	COLLECTOR_TERMINAL_CLOCK_START,
+	COLLECTOR_TERMINAL_CLOCK_WAIT,
+	COLLECTOR_TERMINAL_CLOCK_SAMPLE,
+	COLLECTOR_TERMINAL_CLOCK_PUBLICATION_MONOTONIC,
+	COLLECTOR_TERMINAL_CLOCK_PUBLICATION_REALTIME,
+	COLLECTOR_TERMINAL_SCHEDULE
+};
+
+struct collector_terminal {
+	enum collector_terminal_cause cause;
+	uint64_t after_generation;
+	bool read_result_valid;
+	enum collector_read_result read_result;
+};
+
 // One published generation is one completed measurement window.  Every field is
 // a whole value; a reader copies the structure under the mutex and then uses
 // only its private copy.
@@ -206,9 +229,6 @@ struct collector_snapshot {
 	bool gtt_valid;
 
 	uint32_t capabilities;
-
-	bool fatal;
-	int fatal_read_result;
 };
 
 struct collector {
@@ -223,6 +243,7 @@ struct collector {
 	int (*join_thread)(pthread_t thread, void **result);
 
 	struct collector_snapshot snapshot;
+	struct collector_terminal terminal;
 
 	bool stop_requested;
 	bool thread_started;
@@ -240,30 +261,37 @@ int collector_init(struct collector *collector,
 int collector_start(struct collector *collector);
 
 enum collector_wait_result {
-	COLLECTOR_WAIT_SNAPSHOT = 0, // out holds a generation newer than requested
-	COLLECTOR_WAIT_TIMEOUT = 1,  // the deadline passed; out stays unmodified
-	COLLECTOR_WAIT_FINISHED = 2, // the worker exited; out holds its last state
-	COLLECTOR_WAIT_FATAL = 3,    // the worker lost the backend; out holds why
-	COLLECTOR_WAIT_ERROR = 4,    // the wait primitive failed; out stays unmodified
-	COLLECTOR_WAIT_GAP = 5       // an exact consumer lost windows; out holds latest
+	COLLECTOR_WAIT_SNAPSHOT = 0, // snapshot_out holds a newer generation
+	COLLECTOR_WAIT_TIMEOUT = 1,  // the deadline passed; outputs stay unmodified
+	COLLECTOR_WAIT_FINISHED = 2, // the worker exited; snapshot_out holds its last state
+	COLLECTOR_WAIT_FATAL = 3,    // the worker stopped; terminal_out holds why
+	COLLECTOR_WAIT_ERROR = 4,    // the wait primitive failed; outputs stay unmodified
+	COLLECTOR_WAIT_GAP = 5       // an exact consumer lost windows; snapshot_out holds latest
 };
 
 // abs_timeout is a CLOCK_MONOTONIC deadline, or NULL to wait indefinitely.  A
 // consumer that must also observe a signal flag passes a bounded deadline and
-// re-tests the flag on COLLECTOR_WAIT_TIMEOUT.
+// re-tests the flag on COLLECTOR_WAIT_TIMEOUT.  SNAPSHOT, FINISHED, and GAP
+// write snapshot_out; FATAL writes terminal_out; TIMEOUT and ERROR write neither.
 int collector_wait_next(struct collector *collector, uint64_t after_generation,
 		const struct timespec *abs_timeout,
-		struct collector_snapshot *out);
+		struct collector_snapshot *snapshot_out,
+		struct collector_terminal *terminal_out);
 
 // Dump capture requires every generation.  This variant reports a gap instead
 // of silently returning the newest replaceable snapshot.
 int collector_wait_next_contiguous(struct collector *collector,
 		uint64_t after_generation, const struct timespec *abs_timeout,
-		struct collector_snapshot *out);
+		struct collector_snapshot *snapshot_out,
+		struct collector_terminal *terminal_out);
 
 // Copies the current snapshot without waiting.  Returns false before the first
 // generation publishes.
 bool collector_peek(struct collector *collector, struct collector_snapshot *out);
+bool collector_terminal_peek(struct collector *collector,
+		struct collector_terminal *out);
+const char *collector_terminal_cause_name(enum collector_terminal_cause cause);
+bool collector_terminal_cause_is_clock(enum collector_terminal_cause cause);
 
 void collector_request_stop(struct collector *collector);
 int collector_join(struct collector *collector);

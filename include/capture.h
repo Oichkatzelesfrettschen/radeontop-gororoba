@@ -93,6 +93,7 @@ int radeontop_capture_write_snapshot_evidence(FILE *stream,
 int radeontop_capture_write_run_end(FILE *stream, const char *run_id,
 		const char *reason, int exit_status, uint64_t last_generation,
 		unsigned int record_count,
-		const struct collector_snapshot *terminal_snapshot);
+		const struct collector_snapshot *collector_snapshot,
+		const struct collector_terminal *terminal);
 
 #endif

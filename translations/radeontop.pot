@@ -74,187 +74,197 @@ msgid ""
 "press ENTER to continue\n"
 msgstr ""
 
-#: detect.c:76
+#: detect.c:77
 msgid "Failed to init pciaccess"
 msgstr ""
 
-#: detect.c:94
+#: detect.c:95
 #, c-format
 msgid "Failed to probe PCI device %04x:%02x:%02x.%u: %s\n"
 msgstr ""
 
-#: detect.c:117
+#: detect.c:122
 msgid "The family classifier returned an invalid PCI resource index"
 msgstr ""
 
-#: detect.c:210
+#: detect.c:217
 msgid "Direct MMIO has no validated layout for the selected Radeon PCI ID"
 msgstr ""
 
-#: detect.c:212
+#: detect.c:219
 msgid "Can't get the register area size"
 msgstr ""
 
-#: detect.c:222
+#: detect.c:229
 msgid "Register BAR is smaller than the status window"
 msgstr ""
 
-#: detect.c:240
+#: detect.c:247
 msgid "Cannot elevate privileges for direct MMIO access"
 msgstr ""
 
-#: detect.c:243
+#: detect.c:250
 msgid "Cannot access GPU registers, are you root?"
 msgstr ""
 
-#: detect.c:248 detect.c:270
+#: detect.c:255 detect.c:277
 msgid "mmap failed"
 msgstr ""
 
-#: detect.c:267
+#: detect.c:274
 msgid "Register BAR is smaller than the GRBM window"
 msgstr ""
 
-#: detect.c:275
+#: detect.c:282
 msgid "Failed to close the GPU register resource"
 msgstr ""
 
-#: detect.c:277
+#: detect.c:284
 msgid "Failed to drop effective privileges after direct MMIO setup"
 msgstr ""
 
-#: detect.c:308
+#: detect.c:315
 msgid "Failed to query driver version"
 msgstr ""
 
-#: detect.c:313
+#: detect.c:320
 #, c-format
 msgid "The DRM driver returned no name\n"
 msgstr ""
 
-#: detect.c:342
+#: detect.c:349
 #, c-format
 msgid "The DRM driver name is too long\n"
 msgstr ""
 
-#: detect.c:363
+#: detect.c:370
 #, c-format
 msgid "amdgpu support is not compiled in (libdrm 2.4.63 required)\n"
 msgstr ""
 
-#: detect.c:366
+#: detect.c:373
 #, c-format
 msgid "Unsupported driver %s\n"
 msgstr ""
 
-#: detect.c:406
+#: detect.c:413
 #, c-format
 msgid "The DRM device has no PCI bus identity\n"
 msgstr ""
 
-#: detect.c:410
+#: detect.c:417
 #, c-format
 msgid "The DRM device returned an invalid PCI bus identity\n"
 msgstr ""
 
-#: detect.c:418
+#: detect.c:425
 #, c-format
 msgid "Failed to init pciaccess: %s\n"
 msgstr ""
 
-#: detect.c:423
+#: detect.c:430
 #, c-format
 msgid "Failed to resolve the DRM device PCI identity\n"
 msgstr ""
 
-#: detect.c:454
+#: detect.c:461
 msgid "Failed to open DRM node, no VRAM support.\n"
 msgstr ""
 
-#: detect.c:465
+#: detect.c:472
 #, c-format
 msgid "Failed to open %s: %s\n"
 msgstr ""
 
-#: detect.c:488
+#: detect.c:495
 msgid "Failed to find DRM devices"
 msgstr ""
 
-#: detect.c:493
+#: detect.c:500
 msgid "Failed to allocate memory for DRM\n"
 msgstr ""
 
-#: detect.c:496
+#: detect.c:503
 msgid "Failed to get DRM devices"
 msgstr ""
 
-#: detect.c:545
+#: detect.c:555
 msgid "Failed to get device info"
 msgstr ""
 
-#: detect.c:550
+#: detect.c:560
 #, c-format
 msgid "Unsupported bus type %d\n"
 msgstr ""
 
-#: detect.c:612
+#: detect.c:622
 msgid "Forcing the direct MMIO register path.\n"
 msgstr ""
 
-#: detect.c:620
+#: detect.c:630
 msgid "Can't find Radeon cards"
 msgstr ""
 
-#: detect.c:623
+#: detect.c:633
 msgid "The selected Radeon device has no PCI identity"
 msgstr ""
 
-#: dump.c:191
+#: dump.c:186
 #, c-format
 msgid "Dumping to %s, "
 msgstr ""
 
-#: dump.c:194
+#: dump.c:189
 #, c-format
 msgid "line limit %u.\n"
 msgstr ""
 
-#: dump.c:196
+#: dump.c:191
 msgid "until termination.\n"
 msgstr ""
 
-#: dump.c:206
+#: dump.c:201
 msgid "Can't open file for writing."
 msgstr ""
 
-#: dump.c:210
+#: dump.c:205
 msgid "Another capture owns the output file.\n"
 msgstr ""
 
-#: dump.c:217
+#: dump.c:212
 msgid "Failed writing the capture record boundary.\n"
 msgstr ""
 
-#: dump.c:225
+#: dump.c:220
 msgid "Failed writing the capture provenance header.\n"
 msgstr ""
 
-#: dump.c:272 ui.c:147
+#: dump.c:273 ui.c:129
 #, c-format
 msgid "The collector lost the device, stopping.\n"
 msgstr ""
 
-#: dump.c:287 ui.c:151
+#: dump.c:276 ui.c:131
+#, c-format
+msgid "The collector clock failed, stopping.\n"
+msgstr ""
+
+#: dump.c:279 ui.c:133
+#, c-format
+msgid "The collector schedule failed, stopping.\n"
+msgstr ""
+
+#: dump.c:293 ui.c:163
 #, c-format
 msgid "The collector wait failed, stopping.\n"
 msgstr ""
 
-#: dump.c:294
+#: dump.c:300
 #, c-format
 msgid "The capture lost a completed measurement window, stopping.\n"
 msgstr ""
 
-#: dump.c:303 dump.c:313
+#: dump.c:309 dump.c:319
 msgid "Failed writing the dump output.\n"
 msgstr ""
 
@@ -356,185 +366,197 @@ msgstr ""
 msgid "Unexpected operand '%s'\n"
 msgstr ""
 
-#: radeontop.c:253
+#: radeontop.c:249
+msgid "Failed to select the capture numeric locale"
+msgstr ""
+
+#: radeontop.c:261
 msgid "Failed to drop privileges"
 msgstr ""
 
-#: radeontop.c:257
+#: radeontop.c:265
 msgid "Unsupported Radeon PCI ID: no validated family model"
 msgstr ""
 
-#: radeontop.c:269
+#: radeontop.c:277
 msgid "Failed to initialize the collector clock"
 msgstr ""
 
-#: radeontop.c:294
+#: radeontop.c:302
 msgid "Failed to initialize capture provenance"
 msgstr ""
 
-#: radeontop.c:299
+#: radeontop.c:307
 msgid "Failed to initialize the collector"
 msgstr ""
 
-#: radeontop.c:304
+#: radeontop.c:312
 msgid "Failed to start the collector thread"
 msgstr ""
 
-#: radeontop.c:318
+#: radeontop.c:326
 #, c-format
 msgid "Failed to join the collector thread.\n"
 msgstr ""
 
-#: ui.c:134
+#: ui.c:146
 #, c-format
 msgid "Collecting data, please wait....\n"
 msgstr ""
 
-#: ui.c:161
+#: ui.c:173
 #, c-format
 msgid "Failed to initialize the terminal interface.\n"
 msgstr ""
 
-#: ui.c:202
+#: ui.c:214
 #, c-format
 msgid "radeontop %s, running on %s bus %02x, %u samples/sec"
 msgstr ""
 
-#: ui.c:217
+#: ui.c:230
 #, c-format
 msgid "Failed to read the display clock.\n"
 msgstr ""
 
-#: ui.c:267
+#: ui.c:281
 msgid "collector: device lost"
 msgstr ""
 
-#: ui.c:270
+#: ui.c:283
+msgid "collector: clock failed"
+msgstr ""
+
+#: ui.c:285
+msgid "collector: schedule failed"
+msgstr ""
+
+#: ui.c:288
 #, c-format
 msgid "gen %llu  age %.1fs  STALE"
 msgstr ""
 
-#: ui.c:274
+#: ui.c:292
 #, c-format
 msgid "gen %llu  age %.1fs  coverage %.1f%%  missed %llu  failed %llu"
 msgstr ""
 
-#: ui.c:287
+#: ui.c:305
 #, c-format
 msgid "Graphics pipe %6.2f%%"
 msgstr ""
 
-#: ui.c:293
+#: ui.c:311
 #, c-format
 msgid "Event Engine %6.2f%%"
 msgstr ""
 
-#: ui.c:300
+#: ui.c:318
 #, c-format
 msgid "Vertex Grouper + Tesselator %6.2f%%"
 msgstr ""
 
-#: ui.c:313
+#: ui.c:331
 #, c-format
 msgid "Texture Addresser %6.2f%%"
 msgstr ""
 
-#: ui.c:319
+#: ui.c:337
 #, c-format
 msgid "Texture Cache %6.2f%%"
 msgstr ""
 
-#: ui.c:329
+#: ui.c:347
 #, c-format
 msgid "Shader Export %6.2f%%"
 msgstr ""
 
-#: ui.c:334
+#: ui.c:352
 #, c-format
 msgid "Sequencer Instruction Cache %6.2f%%"
 msgstr ""
 
-#: ui.c:339
+#: ui.c:357
 #, c-format
 msgid "Shader Interpolator %6.2f%%"
 msgstr ""
 
-#: ui.c:345
+#: ui.c:363
 #, c-format
 msgid "Shader Memory Exchange %6.2f%%"
 msgstr ""
 
-#: ui.c:354
+#: ui.c:372
 #, c-format
 msgid "Scan Converter %6.2f%%"
 msgstr ""
 
-#: ui.c:358
+#: ui.c:376
 #, c-format
 msgid "Primitive Assembly %6.2f%%"
 msgstr ""
 
-#: ui.c:366
+#: ui.c:384
 #, c-format
 msgid "Depth Block %6.2f%%"
 msgstr ""
 
-#: ui.c:371
+#: ui.c:389
 #, c-format
 msgid "Color Block %6.2f%%"
 msgstr ""
 
-#: ui.c:377
+#: ui.c:395
 #, c-format
 msgid "Clip Rectangle %6.2f%%"
 msgstr ""
 
-#: ui.c:383
+#: ui.c:401
 #, c-format
 msgid "Command Stream %6.2f%%"
 msgstr ""
 
-#: ui.c:387
+#: ui.c:405
 #, c-format
 msgid "2D Engine %6.2f%%"
 msgstr ""
 
-#: ui.c:391
+#: ui.c:409
 #, c-format
 msgid "2D Backend %6.2f%%"
 msgstr ""
 
-#: ui.c:395
+#: ui.c:413
 #, c-format
 msgid "Cmd Fetch %6.2f%%"
 msgstr ""
 
-#: ui.c:399
+#: ui.c:417
 #, c-format
 msgid "UVD %6.2f%%"
 msgstr ""
 
-#: ui.c:403
+#: ui.c:421
 #, c-format
 msgid "VCE %6.2f%%"
 msgstr ""
 
-#: ui.c:413
+#: ui.c:431
 #, c-format
 msgid "%.0fM / %.0fM VRAM %6.2f%%"
 msgstr ""
 
-#: ui.c:421
+#: ui.c:439
 #, c-format
 msgid "%.0fM / %.0fM GTT %6.2f%%"
 msgstr ""
 
-#: ui.c:434
+#: ui.c:452
 #, c-format
 msgid "%.2fG / %.2fG Memory Clock %6.2f%%"
 msgstr ""
 
-#: ui.c:442
+#: ui.c:460
 #, c-format
 msgid "%.2fG / %.2fG Shader Clock %6.2f%%"
 msgstr ""

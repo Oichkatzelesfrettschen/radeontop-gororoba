@@ -211,8 +211,6 @@ static void check_snapshot_evidence(void) {
 	masks.lane[COLLECTOR_LANE_UVD] = 1U << 19;
 	snapshot.capabilities = COLLECTOR_CAP_STATUS | COLLECTOR_CAP_SCLK |
 		COLLECTOR_CAP_VRAM;
-	snapshot.fatal = true;
-	snapshot.fatal_read_result = COLLECTOR_READ_FATAL;
 
 	stream = tmpfile();
 	CHECK(stream != NULL);
@@ -222,7 +220,7 @@ static void check_snapshot_evidence(void) {
 	CHECK(radeontop_capture_write_snapshot_evidence(stream,
 		"11111111-2222-4333-8444-555555555555", &masks, &snapshot) == 0);
 	CHECK(read_stream(stream, output, sizeof(output)));
-	CHECK(strstr(output, ", evidence_v1 {") == output);
+	CHECK(strstr(output, ", evidence_v2 {") == output);
 	CHECK(strstr(output,
 		"\"gpu\":{\"busy\":3,\"valid\":8,\"nominal\":10,\"conditional\":0.375000000,\"unconditional\":[0.300000000,0.500000000]}") != NULL);
 	CHECK(strstr(output,
@@ -232,11 +230,93 @@ static void check_snapshot_evidence(void) {
 	CHECK(strstr(output, "\"sclk\":425000.000000000") != NULL);
 	CHECK(strstr(output,
 		"\"vram\":{\"supported\":true,\"valid\":false,\"bytes\":null}") != NULL);
-	CHECK(strstr(output,
-		"\"terminal\":{\"fatal\":true,\"read_result\":2}") != NULL);
+	CHECK(strstr(output, "\"terminal\"") == NULL);
 	CHECK(strchr(output, '\n') == NULL);
 
 	fclose(stream);
+}
+
+static void check_run_end_records(void) {
+	static const char run_id[] = "11111111-2222-4333-8444-555555555555";
+	struct collector_snapshot snapshot;
+	struct collector_terminal device_terminal;
+	struct collector_terminal clock_terminal;
+	FILE *stream;
+	FILE *invalid_stream;
+	char output[4096];
+
+	memset(&snapshot, 0, sizeof(snapshot));
+	memset(&device_terminal, 0, sizeof(device_terminal));
+	memset(&clock_terminal, 0, sizeof(clock_terminal));
+	snapshot.generation = 3;
+	device_terminal.cause = COLLECTOR_TERMINAL_DEVICE_READ;
+	device_terminal.after_generation = 3;
+	device_terminal.read_result_valid = true;
+	device_terminal.read_result = COLLECTOR_READ_FATAL;
+	clock_terminal.cause = COLLECTOR_TERMINAL_CLOCK_PUBLICATION_MONOTONIC;
+	clock_terminal.after_generation = 3;
+
+	stream = tmpfile();
+	CHECK(stream != NULL);
+	if (!stream)
+		return;
+	CHECK(radeontop_capture_write_run_end(stream, run_id,
+		"collector-device-error", 1, 3, 3, &snapshot,
+		&device_terminal) == 0);
+	CHECK(read_stream(stream, output, sizeof(output)));
+	CHECK(strstr(output, "# radeontop_run_end_v2 {") == output);
+	CHECK(strstr(output,
+		"\"terminal\":{\"after_generation\":3,\"cause\":\"device-read\",\"read_result\":2}") != NULL);
+	fclose(stream);
+
+	stream = tmpfile();
+	CHECK(stream != NULL);
+	if (!stream)
+		return;
+	CHECK(radeontop_capture_write_run_end(stream, run_id,
+		"collector-clock-error", 1, 3, 3, &snapshot,
+		&clock_terminal) == 0);
+	CHECK(read_stream(stream, output, sizeof(output)));
+	CHECK(strstr(output,
+		"\"terminal\":{\"after_generation\":3,\"cause\":\"clock-publication-monotonic\",\"read_result\":null}") != NULL);
+	fclose(stream);
+
+	stream = tmpfile();
+	CHECK(stream != NULL);
+	if (!stream)
+		return;
+	CHECK(radeontop_capture_write_run_end(stream, run_id,
+		"line-limit", 0, 3, 3, &snapshot, NULL) == 0);
+	CHECK(read_stream(stream, output, sizeof(output)));
+	CHECK(strstr(output,
+		"\"collector\":{\"latest_generation\":3,\"terminal\":null}") != NULL);
+	CHECK(fclose(stream) == 0);
+
+	invalid_stream = tmpfile();
+	CHECK(invalid_stream != NULL);
+	if (!invalid_stream)
+		return;
+	clock_terminal.after_generation = 2;
+	CHECK(radeontop_capture_write_run_end(invalid_stream, run_id,
+		"collector-clock-error", 1, 3, 3, &snapshot,
+		&clock_terminal) != 0);
+	clock_terminal.after_generation = 3;
+	clock_terminal.read_result_valid = true;
+	clock_terminal.read_result = COLLECTOR_READ_FATAL;
+	CHECK(radeontop_capture_write_run_end(invalid_stream, run_id,
+		"collector-clock-error", 1, 3, 3, &snapshot,
+		&clock_terminal) != 0);
+	device_terminal.read_result_valid = false;
+	CHECK(radeontop_capture_write_run_end(invalid_stream, run_id,
+		"collector-device-error", 1, 3, 3, &snapshot,
+		&device_terminal) != 0);
+	device_terminal.read_result_valid = true;
+	CHECK(radeontop_capture_write_run_end(invalid_stream, run_id,
+		"collector-device-error", 1, 0, 0, NULL,
+		&device_terminal) != 0);
+	CHECK(radeontop_capture_write_run_end(invalid_stream, run_id,
+		"line-limit", 0, 3, 3, NULL, NULL) != 0);
+	CHECK(fclose(invalid_stream) == 0);
 }
 
 static void check_exclusive_stream_lock(void) {
@@ -361,7 +441,7 @@ static void check_append_record_boundary(void) {
 	CHECK(radeontop_capture_write_append_boundary(NULL) != 0);
 }
 
-static int emit_json_fixture(void) {
+static int emit_json_fixture(bool clock_failure) {
 	char encoded_argument[] = {
 		'u', 't', 'f', '8', ':', (char) 0xc3, (char) 0xa9,
 		':', (char) 0xff, '\0'
@@ -369,8 +449,10 @@ static int emit_json_fixture(void) {
 	char *arguments[] = { "radeontop", "-d", "-", encoded_argument };
 	struct radeontop_capture_metadata metadata;
 	struct collector_snapshot snapshot;
-	struct collector_snapshot fatal_before_first;
+	struct collector_terminal terminal;
 	struct engine_masks masks;
+	const char *reason = clock_failure ? "collector-clock-error" :
+		"collector-device-error";
 
 	memset(&metadata, 0, sizeof(metadata));
 	memcpy(metadata.run_id, "11111111-2222-4333-8444-555555555555", 37);
@@ -394,6 +476,7 @@ static int emit_json_fixture(void) {
 	metadata.identity.resource_index = RADEON_PCI_RESOURCE_NONE;
 
 	memset(&snapshot, 0, sizeof(snapshot));
+	memset(&terminal, 0, sizeof(terminal));
 	memset(&masks, 0, sizeof(masks));
 	snapshot.generation = 1;
 	snapshot.nominal_slots = 4;
@@ -406,19 +489,22 @@ static int emit_json_fixture(void) {
 	snapshot.sclk_mean_khz = 425000.0;
 	snapshot.capabilities = COLLECTOR_CAP_STATUS | COLLECTOR_CAP_SCLK |
 		COLLECTOR_CAP_VRAM;
-	snapshot.fatal = true;
-	snapshot.fatal_read_result = COLLECTOR_READ_FATAL;
 	masks.lane[COLLECTOR_LANE_GUI] = 1U << 31;
 	snapshot.lane_busy[COLLECTOR_LANE_GUI] = 1;
-	fatal_before_first = snapshot;
-	fatal_before_first.generation = 0;
+	terminal.cause = clock_failure ?
+		COLLECTOR_TERMINAL_CLOCK_PUBLICATION_MONOTONIC :
+		COLLECTOR_TERMINAL_DEVICE_READ;
+	terminal.after_generation = 0;
+	terminal.read_result_valid = !clock_failure;
+	terminal.read_result = clock_failure ? COLLECTOR_READ_OK :
+		COLLECTOR_READ_FATAL;
 
 	if (radeontop_capture_write_header(stdout, &metadata) ||
 		fputs("sample", stdout) == EOF ||
 		radeontop_capture_write_snapshot_evidence(stdout, metadata.run_id,
 			&masks, &snapshot) || fputc('\n', stdout) == EOF ||
 		radeontop_capture_write_run_end(stdout, metadata.run_id,
-			"collector-fatal", 1, 0, 0, &fatal_before_first))
+			reason, 1, 0, 0, NULL, &terminal))
 		return 1;
 
 	return fflush(stdout) ? 1 : 0;
@@ -500,12 +586,15 @@ static void check_system_metadata(void) {
 
 int main(int argc, char **argv) {
 	if (argc == 2 && !strcmp(argv[1], "--emit-json-fixture"))
-		return emit_json_fixture();
+		return emit_json_fixture(false);
+	if (argc == 2 && !strcmp(argv[1], "--emit-clock-json-fixture"))
+		return emit_json_fixture(true);
 	if (argc != 1)
 		return 2;
 
 	check_header();
 	check_snapshot_evidence();
+	check_run_end_records();
 	check_system_metadata();
 	check_exclusive_stream_lock();
 	check_append_record_boundary();
@@ -516,7 +605,8 @@ int main(int argc, char **argv) {
 	CHECK(!radeontop_capture_path_is_stdout(NULL));
 	CHECK(radeontop_capture_write_header(NULL, NULL) != 0);
 	CHECK(radeontop_capture_write_snapshot_evidence(NULL, NULL, NULL, NULL) != 0);
-	CHECK(radeontop_capture_write_run_end(NULL, NULL, NULL, 1, 0, 0, NULL) != 0);
+	CHECK(radeontop_capture_write_run_end(NULL, NULL, NULL, 1, 0, 0,
+		NULL, NULL) != 0);
 
 	printf("capture: %u checks, %u failed, %u skipped\n",
 		checks, failures, skips);

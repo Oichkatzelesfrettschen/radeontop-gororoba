@@ -107,11 +107,12 @@ static void percentage(const unsigned int y, const unsigned int w, const float p
 // Waits in bounded steps so a termination signal is observed while waiting.
 // Returns a collector_wait_result.
 static int wait_bounded(struct collector *collector, uint64_t after,
-		struct collector_snapshot *out) {
+		struct collector_snapshot *snapshot_out,
+		struct collector_terminal *terminal_out) {
 	struct timespec deadline;
 
 	if (clock_gettime(CLOCK_MONOTONIC, &deadline))
-		return COLLECTOR_WAIT_FATAL;
+		return COLLECTOR_WAIT_ERROR;
 
 	deadline.tv_nsec += 200000000L;
 	if (deadline.tv_nsec >= 1000000000L) {
@@ -119,7 +120,17 @@ static int wait_bounded(struct collector *collector, uint64_t after,
 		deadline.tv_sec++;
 	}
 
-	return collector_wait_next(collector, after, &deadline, out);
+	return collector_wait_next(collector, after, &deadline, snapshot_out,
+		terminal_out);
+}
+
+static void report_terminal(enum collector_terminal_cause cause) {
+	if (cause == COLLECTOR_TERMINAL_DEVICE_READ)
+		fprintf(stderr, _("The collector lost the device, stopping.\n"));
+	else if (collector_terminal_cause_is_clock(cause))
+		fprintf(stderr, _("The collector clock failed, stopping.\n"));
+	else
+		fprintf(stderr, _("The collector schedule failed, stopping.\n"));
 }
 
 int present(struct collector *collector, const struct engine_masks *masks,
@@ -129,6 +140,7 @@ int present(struct collector *collector, const struct engine_masks *masks,
 	const unsigned int ticks = collector->config.ticks;
 	const unsigned int dumpinterval = collector->config.dumpinterval;
 	struct collector_snapshot snapshot;
+	struct collector_terminal terminal;
 	int status = 0;
 
 	printf(_("Collecting data, please wait....\n"));
@@ -138,13 +150,13 @@ int present(struct collector *collector, const struct engine_masks *masks,
 	// Draw nothing until one whole window completes; a partial window is not
 	// a measurement.
 	for (;;) {
-		const int wait = wait_bounded(collector, 0, &snapshot);
+		const int wait = wait_bounded(collector, 0, &snapshot, &terminal);
 
 		if (wait == COLLECTOR_WAIT_SNAPSHOT)
 			break;
 
 		if (wait == COLLECTOR_WAIT_FATAL) {
-			fprintf(stderr, _("The collector lost the device, stopping.\n"));
+			report_terminal(terminal.cause);
 			return 1;
 		}
 		if (wait == COLLECTOR_WAIT_ERROR) {
@@ -211,6 +223,7 @@ int present(struct collector *collector, const struct engine_masks *masks,
 		// every displayed figure comes from one window rather than from a
 		// structure the collector is still writing.
 		collector_peek(collector, &snapshot);
+		const bool terminal_observed = collector_terminal_peek(collector, &terminal);
 
 		struct timespec drawn_at;
 		if (clock_gettime(CLOCK_MONOTONIC, &drawn_at)) {
@@ -263,8 +276,13 @@ int present(struct collector *collector, const struct engine_masks *masks,
 		// generation counts completed windows, the age is time since that
 		// window published, and the coverage is valid status reads over
 		// nominal slots.
-		if (snapshot.fatal) {
-			mvprintw(1, 0, "%s", _("collector: device lost"));
+		if (terminal_observed) {
+			if (terminal.cause == COLLECTOR_TERMINAL_DEVICE_READ)
+				mvprintw(1, 0, "%s", _("collector: device lost"));
+			else if (collector_terminal_cause_is_clock(terminal.cause))
+				mvprintw(1, 0, "%s", _("collector: clock failed"));
+			else
+				mvprintw(1, 0, "%s", _("collector: schedule failed"));
 			status = 1;
 		} else if (age_s > 2.0 * dumpinterval) {
 			mvprintw(1, 0, _("gen %llu  age %.1fs  STALE"),
@@ -457,7 +475,7 @@ int present(struct collector *collector, const struct engine_masks *masks,
 		if (c == 'c' || c == 'C') color = !color;
 		if (c == KEY_RESIZE) resize = 1;
 
-		if (snapshot.fatal)
+		if (terminal_observed)
 			break;
 	}
 

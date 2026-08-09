@@ -258,20 +258,25 @@ exports are byte-identical, a dirty tracked Makefile survives unchanged and
 stays outside the archive, downstream flag changes alter only build identity,
 and source-object and archive mutations fail their gates.
 
-Each legacy data line ends with an `evidence_v1` JSON object. It repeats the run
+Each legacy data line ends with an `evidence_v2` JSON object. It repeats the run
 UUID and preserves exact slot accounting, capability bits, five signal
-denominators, clock means, supported/failed endpoint state, terminal read state,
-nanosecond timestamps, timing maxima, and per-exposed-lane `B`, `V`, `N`,
+denominators, clock means, supported/failed endpoint state, nanosecond
+timestamps, timing maxima, and per-exposed-lane `B`, `V`, `N`,
 conditional fraction, and unconditional bounds. Existing human-readable fields
 remain at the front of the line.
 
-The collector holds one replaceable published snapshot. Dump mode therefore
-uses the contiguous-wait contract and fails when a delayed consumer observes a
-generation jump. A silent missing record never enters a successful research
-capture.
+The collector holds one replaceable published snapshot and one separate
+write-once terminal record. Publication commits a generation only after its
+monotonic and realtime stamps succeed, and no later failure mutates that
+generation. An unseen final snapshot reaches a consumer before the terminal
+record whose `after_generation` names it. Dump mode uses the contiguous-wait
+contract and fails when a delayed consumer observes a generation jump. A silent
+missing record never enters a successful research capture.
 
-`# radeontop_run_end_v1` records the run UUID, logical exit reason, logical
-status, record count, last consumed generation, and final collector state. The
+`# radeontop_run_end_v2` records the run UUID, logical exit reason, logical
+status, record count, last consumed generation, last observed committed
+collector generation, and a typed terminal cause. Only a device-read terminal
+carries a backend read result; clock and schedule causes carry JSON `null`. The
 logical fields describe the collection loop; final process status also includes
 capture sync, unlock, and close plus collector join and destruction results and
 remains an external bundle field. Backend and clock teardown calls expose no
@@ -287,6 +292,10 @@ truncated prior record, so it cannot absorb the next run identity. Runtime
 diagnostics use stderr. JSON strings escape quotes, backslashes, control bytes,
 and non-ASCII bytes, so an argument cannot inject a second header record and a
 consumer can recover each original argument byte.
+
+Dump mode selects the C numeric locale before collector thread creation, so
+serialization keeps its decimal contract without a process-global locale
+mutation during concurrent collection.
 
 The optional RS480 GART/MC line appears only when all three exact debugfs keys
 parse once with complete unsigned 32-bit values. Prefix aliases, duplicates,

@@ -78,7 +78,7 @@ static bool build_identity_valid(
 	// have no immutable object from which a later reader can recover those bytes.
 	if (!git_object_id_valid(identity->source_commit))
 		return false;
-	if (strcmp(identity->source_state, "clean"))
+	if (strcmp(identity->source_state, "clean") != 0)
 		return false;
 
 	return lowercase_hex_text_valid(identity->source_sha256, 64) &&
@@ -88,21 +88,22 @@ static bool build_identity_valid(
 static int read_uuid(const char *path, char out[RADEONTOP_CAPTURE_UUID_SIZE]) {
 	char line[64];
 	FILE *stream = fopen(path, "r");
-	size_t length;
+	char *line_ending;
 
 	if (!stream)
 		return -1;
 
 	if (!fgets(line, sizeof(line), stream)) {
-		fclose(stream);
+		(void) fclose(stream);
 		return -1;
 	}
 
 	if (fclose(stream))
 		return -1;
 
-	length = strcspn(line, "\r\n");
-	line[length] = '\0';
+	line_ending = strpbrk(line, "\r\n");
+	if (line_ending)
+		*line_ending = '\0';
 	if (!uuid_text_valid(line))
 		return -1;
 
@@ -454,7 +455,7 @@ int radeontop_capture_write_snapshot_evidence(FILE *stream,
 	if (!stream || !run_id || !uuid_text_valid(run_id) || !masks || !snapshot)
 		return -1;
 
-	if (fputs(", evidence_v1 {\"run_id\":", stream) == EOF ||
+	if (fputs(", evidence_v2 {\"run_id\":", stream) == EOF ||
 		write_json_string(stream, run_id) ||
 		fprintf(stream,
 			",\"generation\":%llu,\"capabilities\":%u,\"slots\":{\"nominal\":%llu,\"attempted\":%llu,\"missed\":%llu},"
@@ -500,10 +501,7 @@ int radeontop_capture_write_snapshot_evidence(FILE *stream,
 			snapshot->vram_valid, snapshot->vram, true) ||
 		write_endpoint(stream, "gtt", COLLECTOR_CAP_GTT, snapshot,
 			snapshot->gtt_valid, snapshot->gtt, false) ||
-		fprintf(stream,
-			"},\"terminal\":{\"fatal\":%s,\"read_result\":%d},\"lanes\":{",
-			snapshot->fatal ? "true" : "false",
-			snapshot->fatal_read_result) < 0)
+		fputs("},\"lanes\":{", stream) == EOF)
 		return -1;
 
 	for (int lane = 0; lane < COLLECTOR_LANE_COUNT; lane++) {
@@ -544,11 +542,37 @@ int radeontop_capture_write_snapshot_evidence(FILE *stream,
 int radeontop_capture_write_run_end(FILE *stream, const char *run_id,
 		const char *reason, int exit_status, uint64_t last_generation,
 		unsigned int record_count,
-		const struct collector_snapshot *terminal_snapshot) {
+		const struct collector_snapshot *collector_snapshot,
+		const struct collector_terminal *terminal) {
+	const char *terminal_cause = terminal ?
+		collector_terminal_cause_name(terminal->cause) : NULL;
+	uint64_t collector_generation = 0;
+
 	if (!stream || !run_id || !uuid_text_valid(run_id) || !reason || !reason[0])
 		return -1;
+	if (terminal && (terminal->cause == COLLECTOR_TERMINAL_NONE ||
+		!strcmp(terminal_cause, "unknown") ||
+		(terminal->cause == COLLECTOR_TERMINAL_DEVICE_READ) !=
+			terminal->read_result_valid ||
+		(terminal->read_result_valid &&
+			terminal->read_result != COLLECTOR_READ_FATAL)))
+		return -1;
+	if (collector_snapshot && terminal &&
+		collector_snapshot->generation != terminal->after_generation)
+		return -1;
+	if (terminal && terminal->after_generation && !collector_snapshot)
+		return -1;
+	if ((collector_snapshot &&
+		collector_snapshot->generation < last_generation) ||
+		(terminal && terminal->after_generation < last_generation) ||
+		(last_generation && !collector_snapshot && !terminal))
+		return -1;
+	if (collector_snapshot)
+		collector_generation = collector_snapshot->generation;
+	else if (terminal)
+		collector_generation = terminal->after_generation;
 
-	if (fputs("# radeontop_run_end_v1 {\"run_id\":", stream) == EOF ||
+	if (fputs("# radeontop_run_end_v2 {\"run_id\":", stream) == EOF ||
 		write_json_string(stream, run_id) ||
 		fputs(",\"reason\":", stream) == EOF ||
 		write_json_string(stream, reason) ||
@@ -558,12 +582,29 @@ int radeontop_capture_write_run_end(FILE *stream, const char *run_id,
 			(unsigned long long) last_generation, record_count) < 0)
 		return -1;
 
-	if (terminal_snapshot) {
-		if (fprintf(stream,
-				"{\"generation\":%llu,\"fatal\":%s,\"read_result\":%d}",
-				(unsigned long long) terminal_snapshot->generation,
-				terminal_snapshot->fatal ? "true" : "false",
-				terminal_snapshot->fatal_read_result) < 0)
+	if (collector_snapshot || terminal) {
+		if (fprintf(stream, "{\"latest_generation\":%llu,\"terminal\":",
+				(unsigned long long) collector_generation) < 0)
+			return -1;
+		if (terminal) {
+			if (fputs("{\"after_generation\":", stream) == EOF ||
+				fprintf(stream, "%llu,\"cause\":",
+					(unsigned long long) terminal->after_generation) < 0 ||
+				write_json_string(stream, terminal_cause) ||
+				fputs(",\"read_result\":", stream) == EOF)
+				return -1;
+			if (terminal->read_result_valid) {
+				if (fprintf(stream, "%d", terminal->read_result) < 0)
+					return -1;
+			} else if (fputs("null", stream) == EOF) {
+				return -1;
+			}
+			if (fputc('}', stream) == EOF)
+				return -1;
+		} else if (fputs("null", stream) == EOF) {
+			return -1;
+		}
+		if (fputc('}', stream) == EOF)
 			return -1;
 	} else if (fputs("null", stream) == EOF) {
 		return -1;

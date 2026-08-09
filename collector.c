@@ -81,6 +81,11 @@ static int monotonic_now(void *context, struct timespec *ts) {
 	return clock_gettime(CLOCK_MONOTONIC, ts);
 }
 
+static int realtime_now(void *context, struct timespec *ts) {
+	(void) context;
+	return clock_gettime(CLOCK_REALTIME, ts);
+}
+
 // wake latches: the collector wakes only to observe a stop request, so a wake
 // that arrives while nobody waits must still short-circuit the next wait.
 static int monotonic_wait_until(void *context, const struct timespec *deadline) {
@@ -157,6 +162,7 @@ struct collector_clock collector_monotonic_clock_ops(struct collector_monotonic_
 
 	ops.context = clock;
 	ops.now = monotonic_now;
+	ops.realtime_now = realtime_now;
 	ops.wait_until = monotonic_wait_until;
 	ops.wake = monotonic_wake;
 
@@ -281,10 +287,10 @@ done:
 	return 0;
 }
 
-// Returns COLLECTOR_READ_FATAL when an endpoint read reported the device gone,
-// in which case the published snapshot already carries the fatal flag and the
-// worker exits rather than reading the same device again.
-static int publish(struct collector *collector,
+// A completed window commits only after both publication clocks answer.  An
+// endpoint device failure can still commit the otherwise complete window and
+// then terminates the worker after that immutable generation.
+static enum collector_terminal_cause publish(struct collector *collector,
 		const struct collector_accumulator *accumulator,
 		const struct timespec *window_start,
 		const struct timespec *window_end,
@@ -343,23 +349,23 @@ static int publish(struct collector *collector,
 		}
 	}
 
-	if (collector->clock.now(collector->clock.context, &snapshot.published) ||
-		clock_gettime(CLOCK_REALTIME, &snapshot.published_realtime)) {
-		endpoint_result = COLLECTOR_READ_FATAL;
-	} else {
-		// The published monotonic/realtime pair is near-simultaneous, so the
-		// publication lag on the monotonic clock converts the realtime stamp to the
-		// scheduled end.  Dating the window by publication time instead would
-		// move the label by however long the endpoint reads took.
-		snapshot.scheduled_end_realtime = snapshot.published_realtime;
-		timespec_add_ns(&snapshot.scheduled_end_realtime,
-			-collector_timespec_delta_ns(window_end, &snapshot.published));
-	}
+	if (collector->clock.now(collector->clock.context, &snapshot.published))
+		return endpoint_result == COLLECTOR_READ_FATAL ?
+			COLLECTOR_TERMINAL_DEVICE_READ :
+			COLLECTOR_TERMINAL_CLOCK_PUBLICATION_MONOTONIC;
+	if (collector->clock.realtime_now(collector->clock.context,
+			&snapshot.published_realtime))
+		return endpoint_result == COLLECTOR_READ_FATAL ?
+			COLLECTOR_TERMINAL_DEVICE_READ :
+			COLLECTOR_TERMINAL_CLOCK_PUBLICATION_REALTIME;
 
-	if (endpoint_result == COLLECTOR_READ_FATAL) {
-		snapshot.fatal = true;
-		snapshot.fatal_read_result = COLLECTOR_READ_FATAL;
-	}
+	// The published monotonic/realtime pair is near-simultaneous, so the
+	// publication lag on the monotonic clock converts the realtime stamp to the
+	// scheduled end.  Dating the window by publication time instead would move
+	// the label by however long the endpoint reads took.
+	snapshot.scheduled_end_realtime = snapshot.published_realtime;
+	timespec_add_ns(&snapshot.scheduled_end_realtime,
+		-collector_timespec_delta_ns(window_end, &snapshot.published));
 
 	pthread_mutex_lock(&collector->mutex);
 	snapshot.generation = collector->snapshot.generation + 1;
@@ -367,13 +373,21 @@ static int publish(struct collector *collector,
 	pthread_cond_broadcast(&collector->changed);
 	pthread_mutex_unlock(&collector->mutex);
 
-	return endpoint_result;
+	return endpoint_result == COLLECTOR_READ_FATAL ?
+		COLLECTOR_TERMINAL_DEVICE_READ : COLLECTOR_TERMINAL_NONE;
 }
 
-static void publish_fatal(struct collector *collector, int fatal_read_result) {
+static void record_terminal(struct collector *collector,
+		enum collector_terminal_cause cause) {
 	pthread_mutex_lock(&collector->mutex);
-	collector->snapshot.fatal = true;
-	collector->snapshot.fatal_read_result = fatal_read_result;
+	if (collector->terminal.cause == COLLECTOR_TERMINAL_NONE) {
+		collector->terminal.cause = cause;
+		collector->terminal.after_generation = collector->snapshot.generation;
+		collector->terminal.read_result_valid =
+			cause == COLLECTOR_TERMINAL_DEVICE_READ;
+		collector->terminal.read_result = collector->terminal.read_result_valid ?
+			COLLECTOR_READ_FATAL : COLLECTOR_READ_OK;
+	}
 	pthread_cond_broadcast(&collector->changed);
 	pthread_mutex_unlock(&collector->mutex);
 }
@@ -502,17 +516,18 @@ static struct timespec schedule_next_base(const struct collector_schedule *sched
 }
 
 // Publishes and opens the next window once the grid reaches the slot count,
-// and does nothing before that.  Returns COLLECTOR_READ_FATAL when an endpoint
-// read reported the device gone.
-static int schedule_complete_window(struct collector *collector,
+// and does nothing before that.  A non-NONE result stops the worker after the
+// last generation that publication committed.
+static enum collector_terminal_cause schedule_complete_window(
+		struct collector *collector,
 		struct collector_accumulator *accumulator,
 		struct collector_schedule *schedule, uint64_t nominal_slots) {
-	int result;
+	enum collector_terminal_cause cause;
 
 	if (schedule->slot < nominal_slots)
-		return COLLECTOR_READ_OK;
+		return COLLECTOR_TERMINAL_NONE;
 
-	result = publish(collector, accumulator, &schedule->window_start,
+	cause = publish(collector, accumulator, &schedule->window_start,
 		&schedule->window_end, nominal_slots);
 
 	memset(accumulator, 0, sizeof(*accumulator));
@@ -523,7 +538,7 @@ static int schedule_complete_window(struct collector *collector,
 	schedule->slot = 0;
 	schedule->remainder = 0;
 
-	return result;
+	return cause;
 }
 
 static void *collector_worker(void *argument) {
@@ -537,12 +552,13 @@ static void *collector_worker(void *argument) {
 	struct collector_accumulator accumulator;
 	struct collector_schedule schedule;
 	struct timespec now, after;
+	enum collector_terminal_cause terminal_cause = COLLECTOR_TERMINAL_NONE;
 
 	memset(&accumulator, 0, sizeof(accumulator));
 	memset(&schedule, 0, sizeof(schedule));
 
 	if (collector->clock.now(collector->clock.context, &schedule.window_start)) {
-		publish_fatal(collector, COLLECTOR_READ_FATAL);
+		record_terminal(collector, COLLECTOR_TERMINAL_CLOCK_START);
 		mark_finished(collector);
 		return NULL;
 	}
@@ -550,22 +566,28 @@ static void *collector_worker(void *argument) {
 	schedule.base = schedule.window_start;
 	schedule.dither_state = collector->config.dither_seed;
 	schedule.dither_enabled = collector->config.dither_seed != 0;
-	if (!schedule_arm(&schedule, ticks, period_quotient, period_remainder))
-		goto fatal;
+	if (!schedule_arm(&schedule, ticks, period_quotient, period_remainder)) {
+		terminal_cause = COLLECTOR_TERMINAL_SCHEDULE;
+		goto terminal;
+	}
 
 	schedule.window_end = schedule.window_start;
 	timespec_add_ns(&schedule.window_end,
 		(int64_t) collector->config.dumpinterval * NS_PER_SEC);
 
 	while (!stop_requested(collector)) {
-		if (collector->clock.wait_until(collector->clock.context, &schedule.deadline))
-			goto fatal;
+		if (collector->clock.wait_until(collector->clock.context, &schedule.deadline)) {
+			terminal_cause = COLLECTOR_TERMINAL_CLOCK_WAIT;
+			goto terminal;
+		}
 
 		if (stop_requested(collector))
 			break;
 
-		if (collector->clock.now(collector->clock.context, &now))
-			goto fatal;
+		if (collector->clock.now(collector->clock.context, &now)) {
+			terminal_cause = COLLECTOR_TERMINAL_CLOCK_SAMPLE;
+			goto terminal;
+		}
 
 		{
 			const int64_t lateness =
@@ -592,35 +614,53 @@ static void *collector_worker(void *argument) {
 
 			accumulator.missed_slots++;
 			if (!schedule_step(&schedule, ticks, period_quotient,
-					period_remainder))
-				goto fatal;
+					period_remainder)) {
+				terminal_cause = COLLECTOR_TERMINAL_SCHEDULE;
+				goto terminal;
+			}
 
-			if (schedule_complete_window(collector, &accumulator, &schedule,
-					nominal_slots) == COLLECTOR_READ_FATAL)
-				goto fatal;
+			terminal_cause = schedule_complete_window(collector, &accumulator,
+				&schedule, nominal_slots);
+			if (terminal_cause != COLLECTOR_TERMINAL_NONE)
+				goto terminal;
 		}
 
 		// Exactly one read per wake-up.  A burst of catch-up reads would bias
 		// the duty estimate toward whatever the stall interrupted and would
 		// concentrate BAR traffic the hazard policy avoids.
-		if (sample_once(collector, &accumulator))
-			goto fatal;
+		if (sample_once(collector, &accumulator)) {
+			// A backend fatal result precedes the latency clock read that can also
+			// fail.  The write-once terminal record preserves that first observed
+			// cause rather than relabeling device loss as a clock failure.
+			terminal_cause =
+				accumulator.fatal_read_result == COLLECTOR_READ_FATAL ?
+				COLLECTOR_TERMINAL_DEVICE_READ :
+				COLLECTOR_TERMINAL_CLOCK_SAMPLE;
+			goto terminal;
+		}
 
 		accumulator.attempted_slots++;
 
-		if (accumulator.fatal_read_result == COLLECTOR_READ_FATAL)
-			goto fatal;
+		if (accumulator.fatal_read_result == COLLECTOR_READ_FATAL) {
+			terminal_cause = COLLECTOR_TERMINAL_DEVICE_READ;
+			goto terminal;
+		}
 
-		if (collector->clock.now(collector->clock.context, &after))
-			goto fatal;
+		if (collector->clock.now(collector->clock.context, &after)) {
+			terminal_cause = COLLECTOR_TERMINAL_CLOCK_SAMPLE;
+			goto terminal;
+		}
 
 		if (!schedule_step(&schedule, ticks, period_quotient,
-				period_remainder))
-			goto fatal;
+				period_remainder)) {
+			terminal_cause = COLLECTOR_TERMINAL_SCHEDULE;
+			goto terminal;
+		}
 
-		if (schedule_complete_window(collector, &accumulator, &schedule,
-				nominal_slots) == COLLECTOR_READ_FATAL)
-			goto fatal;
+		terminal_cause = schedule_complete_window(collector, &accumulator,
+			&schedule, nominal_slots);
+		if (terminal_cause != COLLECTOR_TERMINAL_NONE)
+			goto terminal;
 
 		// A read that outlasted its own period leaves later deadlines already
 		// behind.  Discarding the overrun deadlines returns the worker to the grid
@@ -632,20 +672,23 @@ static void *collector_worker(void *argument) {
 		while (timespec_reached(&schedule.deadline, &after)) {
 			accumulator.missed_slots++;
 			if (!schedule_step(&schedule, ticks, period_quotient,
-					period_remainder))
-				goto fatal;
+					period_remainder)) {
+				terminal_cause = COLLECTOR_TERMINAL_SCHEDULE;
+				goto terminal;
+			}
 
-			if (schedule_complete_window(collector, &accumulator, &schedule,
-					nominal_slots) == COLLECTOR_READ_FATAL)
-				goto fatal;
+			terminal_cause = schedule_complete_window(collector, &accumulator,
+				&schedule, nominal_slots);
+			if (terminal_cause != COLLECTOR_TERMINAL_NONE)
+				goto terminal;
 		}
 	}
 
 	mark_finished(collector);
 	return NULL;
 
-fatal:
-	publish_fatal(collector, COLLECTOR_READ_FATAL);
+terminal:
+	record_terminal(collector, terminal_cause);
 	mark_finished(collector);
 	return NULL;
 }
@@ -670,9 +713,9 @@ int collector_init(struct collector *collector,
 	if ((uint64_t) config->ticks * config->dumpinterval > UINT32_MAX)
 		return -3;
 
-	// The worker calls both on every wake-up, so a null one faults on the
-	// first iteration rather than at construction.
-	if (!clock->now || !clock->wait_until)
+	// The worker calls every required clock entry point during a run, so a null
+	// one fails at construction rather than during collection.
+	if (!clock->now || !clock->realtime_now || !clock->wait_until)
 		return -4;
 
 	// A capability asserts that its register is readable, which makes the
@@ -729,28 +772,33 @@ int collector_start(struct collector *collector) {
 
 int collector_wait_next(struct collector *collector, uint64_t after_generation,
 		const struct timespec *abs_timeout,
-		struct collector_snapshot *out) {
+		struct collector_snapshot *snapshot_out,
+		struct collector_terminal *terminal_out) {
 	int result = COLLECTOR_WAIT_TIMEOUT;
+
+	if (!collector || !snapshot_out || !terminal_out)
+		return COLLECTOR_WAIT_ERROR;
 
 	pthread_mutex_lock(&collector->mutex);
 
 	for (;;) {
 		if (collector->snapshot.generation > after_generation) {
-			*out = collector->snapshot;
+			*snapshot_out = collector->snapshot;
 			result = COLLECTOR_WAIT_SNAPSHOT;
 			break;
 		}
 
-		// A fatal worker publishes no further generation, so a consumer
-		// that kept waiting would wait forever.
-		if (collector->snapshot.fatal) {
-			*out = collector->snapshot;
+		// A terminal worker publishes no further generation.  An unseen completed
+		// generation takes precedence above, so a consumer receives the final
+		// measurement before its associated terminal record.
+		if (collector->terminal.cause != COLLECTOR_TERMINAL_NONE) {
+			*terminal_out = collector->terminal;
 			result = COLLECTOR_WAIT_FATAL;
 			break;
 		}
 
 		if (collector->finished || collector->stop_requested) {
-			*out = collector->snapshot;
+			*snapshot_out = collector->snapshot;
 			result = COLLECTOR_WAIT_FINISHED;
 			break;
 		}
@@ -781,19 +829,23 @@ int collector_wait_next(struct collector *collector, uint64_t after_generation,
 
 int collector_wait_next_contiguous(struct collector *collector,
 		uint64_t after_generation, const struct timespec *abs_timeout,
-		struct collector_snapshot *out) {
+		struct collector_snapshot *snapshot_out,
+		struct collector_terminal *terminal_out) {
+	if (!collector || !snapshot_out || !terminal_out)
+		return COLLECTOR_WAIT_ERROR;
+
 	if (after_generation == UINT64_MAX) {
 		pthread_mutex_lock(&collector->mutex);
-		*out = collector->snapshot;
+		*snapshot_out = collector->snapshot;
 		pthread_mutex_unlock(&collector->mutex);
 		return COLLECTOR_WAIT_GAP;
 	}
 
 	const int result = collector_wait_next(collector, after_generation,
-		abs_timeout, out);
+		abs_timeout, snapshot_out, terminal_out);
 
 	if (result == COLLECTOR_WAIT_SNAPSHOT &&
-		out->generation != after_generation + 1)
+		snapshot_out->generation != after_generation + 1)
 		return COLLECTOR_WAIT_GAP;
 
 	return result;
@@ -801,14 +853,63 @@ int collector_wait_next_contiguous(struct collector *collector,
 
 bool collector_peek(struct collector *collector, struct collector_snapshot *out) {
 	bool published;
+	if (!collector || !out)
+		return false;
 
 	pthread_mutex_lock(&collector->mutex);
-	published = collector->snapshot.generation > 0 || collector->snapshot.fatal;
+	published = collector->snapshot.generation > 0;
 	if (published)
 		*out = collector->snapshot;
 	pthread_mutex_unlock(&collector->mutex);
 
 	return published;
+}
+
+bool collector_terminal_peek(struct collector *collector,
+		struct collector_terminal *out) {
+	bool recorded;
+
+	if (!collector || !out)
+		return false;
+
+	pthread_mutex_lock(&collector->mutex);
+	recorded = collector->terminal.cause != COLLECTOR_TERMINAL_NONE;
+	if (recorded)
+		*out = collector->terminal;
+	pthread_mutex_unlock(&collector->mutex);
+
+	return recorded;
+}
+
+const char *collector_terminal_cause_name(enum collector_terminal_cause cause) {
+	switch (cause) {
+		case COLLECTOR_TERMINAL_NONE:
+			return "none";
+		case COLLECTOR_TERMINAL_DEVICE_READ:
+			return "device-read";
+		case COLLECTOR_TERMINAL_CLOCK_START:
+			return "clock-start";
+		case COLLECTOR_TERMINAL_CLOCK_WAIT:
+			return "clock-wait";
+		case COLLECTOR_TERMINAL_CLOCK_SAMPLE:
+			return "clock-sample";
+		case COLLECTOR_TERMINAL_CLOCK_PUBLICATION_MONOTONIC:
+			return "clock-publication-monotonic";
+		case COLLECTOR_TERMINAL_CLOCK_PUBLICATION_REALTIME:
+			return "clock-publication-realtime";
+		case COLLECTOR_TERMINAL_SCHEDULE:
+			return "schedule";
+	}
+
+	return "unknown";
+}
+
+bool collector_terminal_cause_is_clock(enum collector_terminal_cause cause) {
+	return cause == COLLECTOR_TERMINAL_CLOCK_START ||
+		cause == COLLECTOR_TERMINAL_CLOCK_WAIT ||
+		cause == COLLECTOR_TERMINAL_CLOCK_SAMPLE ||
+		cause == COLLECTOR_TERMINAL_CLOCK_PUBLICATION_MONOTONIC ||
+		cause == COLLECTOR_TERMINAL_CLOCK_PUBLICATION_REALTIME;
 }
 
 void collector_request_stop(struct collector *collector) {

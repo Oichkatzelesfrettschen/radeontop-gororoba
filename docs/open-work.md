@@ -29,6 +29,12 @@ restate one asks for a narrower contract or evidence class.
 - A backend read classifies itself OK, TRANSIENT, or FATAL in the adapter, and a
   fatal result stops the slot rather than letting later reads in the same slot
   proceed against a device that is gone.
+- A completed generation is immutable. Device, clock, and schedule failures
+  enter a separate write-once terminal record whose `after_generation` binds it
+  to the last committed snapshot; backend read results remain exclusive to
+  device-read failures.
+- Dump mode selects its C numeric locale before the collector thread starts;
+  the concurrent serializer performs no process-global locale mutation.
 - `scheduled_end_realtime` derives the window's wall-clock end by subtracting
   the publication lag from a near-simultaneous monotonic/realtime pair, so the
   endpoint reads do not date the window.
@@ -46,7 +52,7 @@ restate one asks for a narrower contract or evidence class.
   Slot membership follows the grid, so slot count, window boundaries, and the
   attempted-plus-missed identity remain invariant. Omitting the flag keeps the
   exact grid, which is what makes two runs of one workload directly comparable.
-- Six unit binaries cover capture serialization, collector scheduling and
+- Seven unit binaries cover capture serialization, collector scheduling and
   failure semantics, device admission and clock conversion, and strict RS480
   observation parsing. A Python standard-library gate parses complete header,
   evidence, and run-end JSON and round-trips arbitrary argument bytes. The
@@ -59,10 +65,11 @@ restate one asks for a narrower contract or evidence class.
   approximation of the language and include flags. The command-database row
   below remains the gate that makes editor and build preprocessing identical.
 - Direct MMIO uses a pure family classifier. Unknown and out-of-range families
-  have no BAR layout and stop before privilege elevation, PCI resource open, or
-  mapping. The process elevates only for the validated resource mapping and
-  optional RS480 debugfs intake, then removes the saved identity before
-  collection.
+  have no BAR layout. Automatic enumeration continues to the first supported
+  candidate, while an explicit unknown device stops before privilege elevation,
+  PCI resource open, or mapping. The process elevates only for the validated
+  resource mapping and optional RS480 debugfs intake, then removes the saved
+  identity before collection.
 - Radeon and amdgpu current clocks convert the kernel ABI's megahertz to the
   collector's kilohertz unit with overflow checks. Only fixed-clock RS480
   derives a memory-clock maximum from a current sample. The amdgpu path checks
@@ -71,20 +78,20 @@ restate one asks for a narrower contract or evidence class.
   source manifest and digest, build manifest and digest, boot, device, and
   command bytes in a versioned JSON header. Each evidence
   object repeats the run UUID and distinguishes support, failure, clock means,
-  endpoints, terminal state, and missing-data bounds. A run-end record names
-  the logical outcome. Regular outputs carry a whole-run lock and final sync;
-  a skipped collector generation fails the capture.
+  endpoints, and missing-data bounds. A run-end record names the logical outcome
+  and the typed terminal cause. Regular outputs carry a whole-run lock and final
+  sync; a skipped collector generation fails the capture.
 - The build-identity self-test recomputes both digests from retained canonical
   manifests. It proves that a source mutation changes the source digest, a flag
   mutation changes the build digest, a dirty tree cannot assert clean state,
   and an exported source can carry an explicit immutable commit. Capture tests
   reject dirty, unknown, and non-object source identities.
 - The distribution target exports committed `HEAD` without editing the
-  worktree, carries source identity in a generated Makefile fragment, regenerates
-  build identity under downstream flags, normalizes archive metadata, and
-  publishes a SHA-256 sidecar. Its calibrated self-test proves deterministic
-  output, dirty-worktree preservation, and rejection of archive and source-ID
-  mutations.
+  worktree, carries source identity in a generated Makefile fragment,
+  regenerates build identity under downstream flags, normalizes archive
+  permissions and metadata, and publishes a SHA-256 sidecar. Its calibrated
+  self-test proves deterministic output, dirty-worktree preservation, and
+  rejection of archive and source-ID mutations.
 - The source-intelligence target emits hashed runtime and linked-test cflow,
   cscope, ctags, Global, compiler-include, callback, complexity, and tool-version
   products from one exact C/H denominator.

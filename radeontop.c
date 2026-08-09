@@ -241,6 +241,14 @@ int main(int argc, char **argv) {
 	if (information_request == INFORMATION_VERSION)
 		version();
 
+#ifdef ENABLE_NLS
+	// Dump records use a period as their decimal separator.  The selection runs
+	// before the collector thread exists, so the process-global locale remains
+	// immutable throughout concurrent collection.
+	if (dump && !setlocale(LC_NUMERIC, "C"))
+		die(_("Failed to select the capture numeric locale"));
+#endif
+
 	// DRM discovery and authentication run unprivileged.  init_pci raises the
 	// saved effective identity only around a validated direct BAR mapping.
 	init_pci(path, &bus, &identity, forcemem);

@@ -68,11 +68,12 @@ immutable object can reconstruct their bytes. The same canonical manifests
 install under `/usr/share/radeontop/`, and their byte encoding in the header is
 `byte-u00xx`.
 Each data line retains its legacy human-readable fields and ends with an
-`evidence_v1` JSON object containing the run UUID, exact timing, attempted and
+`evidence_v2` JSON object containing the run UUID, exact timing, attempted and
 missed slots, capabilities, per-signal validity, clock means, endpoint states,
 lane denominators, and unconditional missing-data bounds. A
-`radeontop_run_end_v1` footer records the logical exit reason and the final
-collector state. The process holds an exclusive lock for a regular output file,
+`radeontop_run_end_v2` footer records the logical exit reason, last observed
+committed generation, and typed device, clock, or schedule terminal cause. The
+process holds an exclusive lock for a regular output file,
 including redirected stdout. A nonempty regular destination receives a newline
 record boundary before the next header, so a truncated prior record cannot
 absorb the new run identity. Runtime diagnostics use stderr, and a generation

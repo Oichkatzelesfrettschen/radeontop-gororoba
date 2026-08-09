@@ -311,8 +311,12 @@ struct fake_clock {
 	const int64_t *extra_delay_ns;
 	size_t extra_delay_len;
 	uint64_t waits;
+	uint64_t wait_calls;
 	uint64_t now_calls;
 	uint64_t fail_now_call;
+	uint64_t realtime_calls;
+	uint64_t fail_realtime_call;
+	uint64_t fail_wait_call;
 };
 
 static void fake_clock_init(struct fake_clock *clock) {
@@ -349,10 +353,32 @@ static int fake_now(void *context, struct timespec *ts) {
 
 	pthread_mutex_lock(&clock->mutex);
 	clock->now_calls++;
-	if (clock->fail_now_call == clock->now_calls)
+	if (clock->fail_now_call == clock->now_calls) {
 		result = -1;
-	else
+		clock->parked = true;
+		pthread_cond_broadcast(&clock->cond);
+	} else {
 		*ts = clock->now;
+	}
+	pthread_mutex_unlock(&clock->mutex);
+
+	return result;
+}
+
+static int fake_realtime_now(void *context, struct timespec *ts) {
+	struct fake_clock *clock = context;
+	int result = 0;
+
+	pthread_mutex_lock(&clock->mutex);
+	clock->realtime_calls++;
+	if (clock->fail_realtime_call == clock->realtime_calls) {
+		result = -1;
+		clock->parked = true;
+		pthread_cond_broadcast(&clock->cond);
+	} else {
+		*ts = clock->now;
+		ts->tv_sec += 1700000000;
+	}
 	pthread_mutex_unlock(&clock->mutex);
 
 	return result;
@@ -363,8 +389,13 @@ static int fake_wait_until(void *context, const struct timespec *deadline) {
 
 	pthread_mutex_lock(&clock->mutex);
 
+	clock->wait_calls++;
 	clock->parked = true;
 	pthread_cond_broadcast(&clock->cond);
+	if (clock->fail_wait_call == clock->wait_calls) {
+		pthread_mutex_unlock(&clock->mutex);
+		return -1;
+	}
 
 	while (!clock->budget && !clock->wake_pending)
 		pthread_cond_wait(&clock->cond, &clock->mutex);
@@ -434,6 +465,7 @@ static struct collector_clock fake_clock_ops(struct fake_clock *clock) {
 
 	ops.context = clock;
 	ops.now = fake_now;
+	ops.realtime_now = fake_realtime_now;
 	ops.wait_until = fake_wait_until;
 	ops.wake = fake_wake;
 
@@ -497,30 +529,51 @@ static void harness_destroy(struct harness *harness) {
 	fake_clock_destroy(&harness->clock);
 }
 
-// Steps the virtual clock until a generation newer than `after` publishes.  The
-// step count is bounded so a defect stops the run instead of hanging it.
-static int next_snapshot(struct harness *harness, uint64_t after,
-		struct collector_snapshot *out) {
+// Steps the virtual clock until the next snapshot or terminal event.  The step
+// count is bounded so a defect stops the run instead of hanging it.
+static int next_event(struct harness *harness, uint64_t after,
+		struct collector_snapshot *snapshot,
+		struct collector_terminal *terminal) {
 	const uint64_t limit = 16 * ((uint64_t) harness->collector.config.ticks *
 		harness->collector.config.dumpinterval + 8);
+	const struct timespec expired = { 0, 0 };
 
-	memset(out, 0, sizeof(*out));
+	memset(snapshot, 0, sizeof(*snapshot));
+	memset(terminal, 0, sizeof(*terminal));
 
 	for (uint64_t step = 0; step < limit; step++) {
+		int event = collector_wait_next(&harness->collector, after, &expired,
+			snapshot, terminal);
+
+		if (event != COLLECTOR_WAIT_TIMEOUT)
+			return event;
+
 		const bool stepped = fake_clock_step(&harness->clock);
 
-		if (collector_peek(&harness->collector, out)) {
-			if (out->fatal)
-				return COLLECTOR_WAIT_FATAL;
-			if (out->generation > after)
-				return COLLECTOR_WAIT_SNAPSHOT;
-		}
+		event = collector_wait_next(&harness->collector, after, &expired,
+			snapshot, terminal);
+		if (event != COLLECTOR_WAIT_TIMEOUT)
+			return event;
 
 		if (!stepped)
 			return COLLECTOR_WAIT_FINISHED;
 	}
 
 	return COLLECTOR_WAIT_TIMEOUT;
+}
+
+static int next_snapshot(struct harness *harness, uint64_t after,
+		struct collector_snapshot *out) {
+	struct collector_terminal terminal;
+
+	return next_event(harness, after, out, &terminal);
+}
+
+static int next_terminal(struct harness *harness, uint64_t after,
+		struct collector_terminal *out) {
+	struct collector_snapshot snapshot;
+
+	return next_event(harness, after, &snapshot, out);
 }
 
 // Cases.
@@ -1149,6 +1202,7 @@ static void case_join_failure_preserves_lifecycle_owners(void) {
 static void case_contiguous_wait_detects_lost_window(void) {
 	struct harness harness;
 	struct collector_snapshot snapshot;
+	struct collector_terminal terminal;
 
 	current_case = "contiguous_wait_detects_lost_window";
 	harness_init(&harness);
@@ -1163,13 +1217,13 @@ static void case_contiguous_wait_detects_lost_window(void) {
 	CHECK_U64(snapshot.generation, 3);
 
 	CHECK(collector_wait_next_contiguous(&harness.collector, 0, NULL,
-		&snapshot) == COLLECTOR_WAIT_GAP);
+		&snapshot, &terminal) == COLLECTOR_WAIT_GAP);
 	CHECK_U64(snapshot.generation, 3);
 	CHECK(collector_wait_next_contiguous(&harness.collector, 2, NULL,
-		&snapshot) == COLLECTOR_WAIT_SNAPSHOT);
+		&snapshot, &terminal) == COLLECTOR_WAIT_SNAPSHOT);
 	CHECK_U64(snapshot.generation, 3);
 	CHECK(collector_wait_next_contiguous(&harness.collector, UINT64_MAX,
-		NULL, &snapshot) == COLLECTOR_WAIT_GAP);
+		NULL, &snapshot, &terminal) == COLLECTOR_WAIT_GAP);
 	CHECK_U64(snapshot.generation, 3);
 
 	harness_stop(&harness);
@@ -1205,6 +1259,7 @@ static void case_fatal_before_first_generation(void) {
 	static const int results[] = { COLLECTOR_READ_FATAL };
 	struct harness harness;
 	struct collector_snapshot snapshot;
+	struct collector_terminal terminal;
 
 	current_case = "fatal_before_first_generation";
 	harness_init(&harness);
@@ -1216,9 +1271,12 @@ static void case_fatal_before_first_generation(void) {
 
 	// A consumer must never spin forever waiting for a first generation that
 	// will not arrive, so the fatal state itself ends the wait.
-	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_FATAL);
-	CHECK(snapshot.fatal);
-	CHECK_U64(snapshot.generation, 0);
+	CHECK(next_terminal(&harness, 0, &terminal) == COLLECTOR_WAIT_FATAL);
+	CHECK(terminal.cause == COLLECTOR_TERMINAL_DEVICE_READ);
+	CHECK_U64(terminal.after_generation, 0);
+	CHECK(terminal.read_result_valid);
+	CHECK(terminal.read_result == COLLECTOR_READ_FATAL);
+	CHECK(!collector_peek(&harness.collector, &snapshot));
 
 	harness_stop(&harness);
 	harness_destroy(&harness);
@@ -1227,6 +1285,7 @@ static void case_fatal_before_first_generation(void) {
 static void case_stop_while_waiting(void) {
 	struct harness harness;
 	struct collector_snapshot snapshot;
+	struct collector_terminal terminal;
 
 	current_case = "stop_while_waiting";
 	harness_init(&harness);
@@ -1242,7 +1301,7 @@ static void case_stop_while_waiting(void) {
 	// A consumer that asks after the worker exited is told so rather than
 	// waiting for a generation that will never publish.
 	CHECK(collector_wait_next(&harness.collector, snapshot.generation, NULL,
-		&snapshot) == COLLECTOR_WAIT_FINISHED);
+		&snapshot, &terminal) == COLLECTOR_WAIT_FINISHED);
 
 	collector_destroy(&harness.collector);
 	harness_destroy(&harness);
@@ -1260,11 +1319,12 @@ struct reader_args {
 static void *reader_thread(void *argument) {
 	struct reader_args *args = argument;
 	struct collector_snapshot snapshot;
+	struct collector_terminal terminal;
 	uint64_t last = 0;
 
 	while (last < READER_TARGET) {
 		if (collector_wait_next(&args->harness->collector, last, NULL,
-				&snapshot) != COLLECTOR_WAIT_SNAPSHOT) {
+				&snapshot, &terminal) != COLLECTOR_WAIT_SNAPSHOT) {
 			args->failures++;
 			break;
 		}
@@ -1427,11 +1487,12 @@ static void case_rejects_double_start(void) {
 	harness_destroy(&harness);
 }
 
-static void case_publication_clock_failure_is_fatal(void) {
+static void case_publication_monotonic_clock_failure_records_terminal(void) {
 	struct harness harness;
 	struct collector_snapshot snapshot;
+	struct collector_terminal terminal;
 
-	current_case = "publication_clock_failure_is_fatal";
+	current_case = "publication_monotonic_clock_failure_records_terminal";
 	harness_init(&harness);
 	harness.masks.lane[COLLECTOR_LANE_GUI] = GUI_BIT;
 
@@ -1439,9 +1500,167 @@ static void case_publication_clock_failure_is_fatal(void) {
 	// start, pre-sample, read start, read end, post-sample, publication.
 	harness.clock.fail_now_call = 6;
 	harness_start(&harness, 1, 1, COLLECTOR_CAP_STATUS);
-	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_FATAL);
-	CHECK(snapshot.fatal);
-	CHECK_U64(snapshot.generation, 1);
+	CHECK(next_terminal(&harness, 0, &terminal) == COLLECTOR_WAIT_FATAL);
+	CHECK(terminal.cause ==
+		COLLECTOR_TERMINAL_CLOCK_PUBLICATION_MONOTONIC);
+	CHECK_U64(terminal.after_generation, 0);
+	CHECK(!terminal.read_result_valid);
+	CHECK(!collector_peek(&harness.collector, &snapshot));
+	CHECK(!strcmp(collector_terminal_cause_name(terminal.cause),
+		"clock-publication-monotonic"));
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+static void case_publication_realtime_clock_failure_records_terminal(void) {
+	struct harness harness;
+	struct collector_snapshot snapshot;
+	struct collector_terminal terminal;
+
+	current_case = "publication_realtime_clock_failure_records_terminal";
+	harness_init(&harness);
+	harness.clock.fail_realtime_call = 1;
+	harness_start(&harness, 1, 1, COLLECTOR_CAP_STATUS);
+
+	CHECK(next_terminal(&harness, 0, &terminal) == COLLECTOR_WAIT_FATAL);
+	CHECK(terminal.cause ==
+		COLLECTOR_TERMINAL_CLOCK_PUBLICATION_REALTIME);
+	CHECK_U64(terminal.after_generation, 0);
+	CHECK(!terminal.read_result_valid);
+	CHECK(!collector_peek(&harness.collector, &snapshot));
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+static void case_start_clock_failure_records_terminal(void) {
+	struct harness harness;
+	struct collector_terminal terminal;
+
+	current_case = "start_clock_failure_records_terminal";
+	harness_init(&harness);
+	harness.clock.fail_now_call = 1;
+	harness_start(&harness, 1, 1, COLLECTOR_CAP_STATUS);
+
+	CHECK(next_terminal(&harness, 0, &terminal) == COLLECTOR_WAIT_FATAL);
+	CHECK(terminal.cause == COLLECTOR_TERMINAL_CLOCK_START);
+	CHECK_U64(terminal.after_generation, 0);
+	CHECK(!terminal.read_result_valid);
+	CHECK(!strcmp(collector_terminal_cause_name(
+		(enum collector_terminal_cause) 999), "unknown"));
+	CHECK(collector_terminal_cause_is_clock(COLLECTOR_TERMINAL_CLOCK_START));
+	CHECK(collector_terminal_cause_is_clock(
+		COLLECTOR_TERMINAL_CLOCK_PUBLICATION_REALTIME));
+	CHECK(!collector_terminal_cause_is_clock(COLLECTOR_TERMINAL_DEVICE_READ));
+	CHECK(!collector_terminal_cause_is_clock(COLLECTOR_TERMINAL_SCHEDULE));
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+static void case_sample_clock_failure_records_terminal(void) {
+	struct harness harness;
+	struct collector_snapshot snapshot;
+	struct collector_terminal terminal;
+
+	current_case = "sample_clock_failure_records_terminal";
+	harness_init(&harness);
+	harness.clock.fail_now_call = 3;
+	harness_start(&harness, 1, 1, COLLECTOR_CAP_STATUS);
+
+	CHECK(next_terminal(&harness, 0, &terminal) == COLLECTOR_WAIT_FATAL);
+	CHECK(terminal.cause == COLLECTOR_TERMINAL_CLOCK_SAMPLE);
+	CHECK_U64(terminal.after_generation, 0);
+	CHECK(!terminal.read_result_valid);
+	CHECK(!collector_peek(&harness.collector, &snapshot));
+
+	pthread_mutex_lock(&harness.backend.mutex);
+	CHECK_U64(harness.backend.status_calls, 0);
+	pthread_mutex_unlock(&harness.backend.mutex);
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+static void case_device_failure_precedes_sample_clock_failure(void) {
+	static const int results[] = { COLLECTOR_READ_FATAL };
+	struct harness harness;
+	struct collector_snapshot snapshot;
+	struct collector_terminal terminal;
+
+	current_case = "device_failure_precedes_sample_clock_failure";
+	harness_init(&harness);
+	harness.backend.status_results = results;
+	harness.backend.status_results_len = 1;
+	// The fourth monotonic read measures latency after the backend has already
+	// reported device loss.  The terminal record preserves execution order.
+	harness.clock.fail_now_call = 4;
+	harness_start(&harness, 1, 1, COLLECTOR_CAP_STATUS);
+
+	CHECK(next_terminal(&harness, 0, &terminal) == COLLECTOR_WAIT_FATAL);
+	CHECK(terminal.cause == COLLECTOR_TERMINAL_DEVICE_READ);
+	CHECK_U64(terminal.after_generation, 0);
+	CHECK(terminal.read_result_valid);
+	CHECK(!collector_peek(&harness.collector, &snapshot));
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+static void case_device_failure_precedes_publication_clock_failure(void) {
+	struct harness harness;
+	struct collector_snapshot snapshot;
+	struct collector_terminal terminal;
+
+	current_case = "device_failure_precedes_publication_clock_failure";
+	harness_init(&harness);
+	harness.backend.vram_result = COLLECTOR_READ_FATAL;
+	// The endpoint read reports device loss before the sixth monotonic call
+	// fails while publication stamps the completed window.
+	harness.clock.fail_now_call = 6;
+	harness_start(&harness, 1, 1, COLLECTOR_CAP_STATUS | COLLECTOR_CAP_VRAM);
+
+	CHECK(next_terminal(&harness, 0, &terminal) == COLLECTOR_WAIT_FATAL);
+	CHECK(terminal.cause == COLLECTOR_TERMINAL_DEVICE_READ);
+	CHECK_U64(terminal.after_generation, 0);
+	CHECK(terminal.read_result_valid);
+	CHECK(!collector_peek(&harness.collector, &snapshot));
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+static void case_terminal_after_publication_preserves_snapshot(void) {
+	struct harness harness;
+	struct collector_snapshot published, retained, after_terminal;
+	struct collector_terminal terminal, peeked, sentinel, sentinel_copy;
+
+	current_case = "terminal_after_publication_preserves_snapshot";
+	harness_init(&harness);
+	harness.clock.fail_wait_call = 2;
+	harness_start(&harness, 1, 1, COLLECTOR_CAP_STATUS);
+
+	CHECK(next_snapshot(&harness, 0, &published) == COLLECTOR_WAIT_SNAPSHOT);
+	retained = published;
+	CHECK(next_terminal(&harness, published.generation, &terminal) ==
+		COLLECTOR_WAIT_FATAL);
+	CHECK(terminal.cause == COLLECTOR_TERMINAL_CLOCK_WAIT);
+	CHECK_U64(terminal.after_generation, published.generation);
+	CHECK(!terminal.read_result_valid);
+	CHECK(collector_peek(&harness.collector, &after_terminal));
+	CHECK(!memcmp(&retained, &after_terminal, sizeof(retained)));
+	CHECK(collector_terminal_peek(&harness.collector, &peeked));
+	CHECK(!memcmp(&terminal, &peeked, sizeof(terminal)));
+
+	// Snapshot delivery writes only snapshot_out even when the terminal record
+	// already exists; the caller can therefore distinguish the active result.
+	memset(&sentinel, 0x5a, sizeof(sentinel));
+	sentinel_copy = sentinel;
+	CHECK(collector_wait_next(&harness.collector, 0, NULL,
+		&after_terminal, &sentinel) == COLLECTOR_WAIT_SNAPSHOT);
+	CHECK(!memcmp(&sentinel, &sentinel_copy, sizeof(sentinel)));
+	CHECK(!memcmp(&retained, &after_terminal, sizeof(retained)));
 
 	harness_stop(&harness);
 	harness_destroy(&harness);
@@ -1454,6 +1673,8 @@ static void case_consumer_wait_error_is_reported(void) {
 	struct engine_masks masks;
 	struct collector_snapshot snapshot;
 	struct collector_snapshot unchanged;
+	struct collector_terminal terminal;
+	struct collector_terminal terminal_unchanged;
 	struct timespec invalid_deadline = { 0, NS_PER_SEC };
 	const struct collector_config config = { 10, 1, 0 };
 
@@ -1473,9 +1694,12 @@ static void case_consumer_wait_error_is_reported(void) {
 
 	memset(&snapshot, 0xa5, sizeof(snapshot));
 	unchanged = snapshot;
+	memset(&terminal, 0x5a, sizeof(terminal));
+	terminal_unchanged = terminal;
 	CHECK(collector_wait_next(&collector, 0, &invalid_deadline,
-		&snapshot) == COLLECTOR_WAIT_ERROR);
+		&snapshot, &terminal) == COLLECTOR_WAIT_ERROR);
 	CHECK(!memcmp(&snapshot, &unchanged, sizeof(snapshot)));
+	CHECK(!memcmp(&terminal, &terminal_unchanged, sizeof(terminal)));
 	collector_destroy(&collector);
 	fake_clock_destroy(&clock);
 	fake_backend_destroy(&backend);
@@ -1586,7 +1810,7 @@ static void case_backend_latency_returns_to_grid(void) {
 static void case_fatal_status_stops_the_slot(void) {
 	static const int results[] = { COLLECTOR_READ_FATAL };
 	struct harness harness;
-	struct collector_snapshot snapshot;
+	struct collector_terminal terminal;
 
 	current_case = "fatal_status_stops_the_slot";
 	harness_init(&harness);
@@ -1595,7 +1819,9 @@ static void case_fatal_status_stops_the_slot(void) {
 
 	harness_start(&harness, 10, 1, COLLECTOR_CAP_STATUS | COLLECTOR_CAP_UVD |
 		COLLECTOR_CAP_VCE | COLLECTOR_CAP_SCLK | COLLECTOR_CAP_MCLK);
-	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_FATAL);
+	CHECK(next_terminal(&harness, 0, &terminal) == COLLECTOR_WAIT_FATAL);
+	CHECK(terminal.cause == COLLECTOR_TERMINAL_DEVICE_READ);
+	CHECK_U64(terminal.after_generation, 0);
 
 	// A device that reported itself gone answers no later register, so the
 	// remaining reads in the slot are never issued.
@@ -1614,7 +1840,7 @@ static void case_fatal_status_stops_the_slot(void) {
 static void case_fatal_sclk_stops_before_mclk(void) {
 	static const int results[] = { COLLECTOR_READ_FATAL };
 	struct harness harness;
-	struct collector_snapshot snapshot;
+	struct collector_terminal terminal;
 
 	current_case = "fatal_sclk_stops_before_mclk";
 	harness_init(&harness);
@@ -1623,7 +1849,9 @@ static void case_fatal_sclk_stops_before_mclk(void) {
 
 	harness_start(&harness, 10, 1, COLLECTOR_CAP_STATUS | COLLECTOR_CAP_SCLK |
 		COLLECTOR_CAP_MCLK);
-	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_FATAL);
+	CHECK(next_terminal(&harness, 0, &terminal) == COLLECTOR_WAIT_FATAL);
+	CHECK(terminal.cause == COLLECTOR_TERMINAL_DEVICE_READ);
+	CHECK_U64(terminal.after_generation, 0);
 
 	pthread_mutex_lock(&harness.backend.mutex);
 	CHECK_U64(harness.backend.status_calls, 1);
@@ -1637,7 +1865,8 @@ static void case_fatal_sclk_stops_before_mclk(void) {
 
 static void case_fatal_endpoint_finishes_the_collector(void) {
 	struct harness harness;
-	struct collector_snapshot snapshot;
+	struct collector_snapshot snapshot, retained, after_terminal;
+	struct collector_terminal terminal;
 
 	current_case = "fatal_endpoint_finishes_the_collector";
 	harness_init(&harness);
@@ -1646,11 +1875,19 @@ static void case_fatal_endpoint_finishes_the_collector(void) {
 	harness_start(&harness, 2, 1, COLLECTOR_CAP_STATUS | COLLECTOR_CAP_VRAM |
 		COLLECTOR_CAP_GTT);
 
-	// The endpoint reads run at publication, so the window publishes and
-	// carries the fatal state rather than being discarded.
-	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_FATAL);
-	CHECK(snapshot.fatal);
+	// The endpoint reads run at publication, so the complete window reaches the
+	// consumer before the separate device terminal record.
+	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_SNAPSHOT);
+	retained = snapshot;
 	CHECK(snapshot.vram_valid == false);
+	CHECK(next_terminal(&harness, snapshot.generation, &terminal) ==
+		COLLECTOR_WAIT_FATAL);
+	CHECK(terminal.cause == COLLECTOR_TERMINAL_DEVICE_READ);
+	CHECK_U64(terminal.after_generation, snapshot.generation);
+	CHECK(terminal.read_result_valid);
+	CHECK(terminal.read_result == COLLECTOR_READ_FATAL);
+	CHECK(collector_peek(&harness.collector, &after_terminal));
+	CHECK(!memcmp(&retained, &after_terminal, sizeof(retained)));
 
 	// A fatal VRAM result already established the device is gone.
 	pthread_mutex_lock(&harness.backend.mutex);
@@ -1678,14 +1915,12 @@ static void case_transient_endpoint_continues(void) {
 	// A transient endpoint failure invalidates its own point measurement and
 	// leaves the collector running and the other endpoint readable.
 	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_SNAPSHOT);
-	CHECK(snapshot.fatal == false);
 	CHECK(snapshot.vram_valid == false);
 	CHECK(snapshot.gtt_valid);
 	CHECK_U64(snapshot.gtt, 4096);
 
 	CHECK(next_snapshot(&harness, snapshot.generation, &snapshot) ==
 		COLLECTOR_WAIT_SNAPSHOT);
-	CHECK(snapshot.fatal == false);
 
 	harness_stop(&harness);
 	harness_destroy(&harness);
@@ -1811,7 +2046,7 @@ static void case_rejects_incomplete_interfaces(void) {
 		CHECK(collector_init(&collector, &config, &broken, &masks, &clock_ops) != 0);
 	}
 
-	// The worker calls both clock entry points on every wake-up.
+	// The worker requires monotonic scheduling and a publication wall clock.
 	{
 		const struct collector_backend ops =
 			fake_backend_ops(&backend, COLLECTOR_CAP_STATUS);
@@ -1822,6 +2057,10 @@ static void case_rejects_incomplete_interfaces(void) {
 
 		clock_ops = fake_clock_ops(&clock);
 		clock_ops.wait_until = NULL;
+		CHECK(collector_init(&collector, &config, &ops, &masks, &clock_ops) != 0);
+
+		clock_ops = fake_clock_ops(&clock);
+		clock_ops.realtime_now = NULL;
 		CHECK(collector_init(&collector, &config, &ops, &masks, &clock_ops) != 0);
 	}
 
@@ -1920,7 +2159,13 @@ int main(void) {
 	case_long_interval_prompt_shutdown();
 	case_rejects_impossible_configuration();
 	case_rejects_double_start();
-	case_publication_clock_failure_is_fatal();
+	case_publication_monotonic_clock_failure_records_terminal();
+	case_publication_realtime_clock_failure_records_terminal();
+	case_start_clock_failure_records_terminal();
+	case_sample_clock_failure_records_terminal();
+	case_device_failure_precedes_sample_clock_failure();
+	case_device_failure_precedes_publication_clock_failure();
+	case_terminal_after_publication_preserves_snapshot();
 	case_consumer_wait_error_is_reported();
 	case_dither_rejects_modulo_bias();
 	case_dither_uses_exact_fractional_slot_width();
