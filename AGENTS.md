@@ -256,7 +256,7 @@ Build from the repository with GNU make:
 
 ```sh
 make
-make install PREFIX=/usr DESTDIR=/path/to/staging
+make install PREFIX=/usr DESTDIR=./staging
 ```
 
 Makefile option knobs: `nls` (translations, default on), `xcb` (unprivileged

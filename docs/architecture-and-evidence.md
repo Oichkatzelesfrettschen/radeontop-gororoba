@@ -91,7 +91,7 @@ the list deliberately.
 
 `UNKNOWN_CHIP`, negative enum values, the terminal family sentinel, and values
 above the sentinel have no layout. The classifier rejects them before an
-effective-UID transition, PCI resource open, or `mmap` occurs. An unknown AMD
+effective-UID elevation, PCI resource open, or `mmap` occurs. An unknown AMD
 display device inherits neither an R600 GRBM layout nor generic R600 masks.
 Process startup also rejects an unknown family before `initbits`, so a DRM
 register reader cannot expose a generic gauge map for an unclassified PCI ID.
@@ -249,8 +249,9 @@ description, object ID, and clean state. The exported Makefile loads that
 fragment and keeps `getver.sh` active, so each downstream build recomputes the
 source manifest over the archive bytes and recomputes the build manifest over
 its own compiler, flags, libraries, and options. The distribution target never
-edits the checkout. It normalizes path order, timestamp, ownership, and gzip
-metadata and publishes a SHA-256 sidecar. `tools/check-dist.sh` proves two
+edits the checkout. The caller supplies the output directory explicitly. The
+target normalizes path order, timestamp, ownership, and gzip metadata and
+publishes a SHA-256 sidecar. `tools/check-dist.sh` proves two
 exports are byte-identical, a dirty tracked Makefile survives unchanged and
 stays outside the archive, downstream flag changes alter only build identity,
 and source-object and archive mutations fail their gates.
@@ -293,7 +294,8 @@ The command below writes one bounded analysis directory without cleaning or
 overwriting an existing directory:
 
 ```sh
-make source-intelligence SOURCE_INTELLIGENCE_DIR=/path/to/empty/output
+source_intelligence_dir=$(mktemp -d)
+make source-intelligence SOURCE_INTELLIGENCE_DIR="$source_intelligence_dir"
 ```
 
 The bundle contains:

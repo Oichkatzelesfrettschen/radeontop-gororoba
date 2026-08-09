@@ -104,17 +104,17 @@ make check-build-identity
 make check-cli-docs
 make check-dist
 make check-test-dependencies
-make install PREFIX=/usr DESTDIR=/path/to/staging
+make install PREFIX=/usr DESTDIR=./staging
 ```
 
 `make dist` exports committed `HEAD` without changing the worktree. The archive
 carries its source object and version in a generated Makefile fragment, retains
 the identity recipe for the downstream compiler and flags, and writes a
 deterministic gzip stream plus a SHA-256 sidecar. `DIST_OUTPUT_DIR` selects the
-destination.
+explicit destination.
 
 ```sh
-make dist DIST_OUTPUT_DIR=/path/to/output
+make dist DIST_OUTPUT_DIR=./dist-output
 ```
 
 Build options take `1` to enable a lane:
@@ -141,7 +141,8 @@ calibration results, and a verified SHA-256 manifest. The destination must be
 empty.
 
 ```sh
-make source-intelligence SOURCE_INTELLIGENCE_DIR=/path/to/empty/output
+source_intelligence_dir=$(mktemp -d)
+make source-intelligence SOURCE_INTELLIGENCE_DIR="$source_intelligence_dir"
 ```
 
 The [architecture and evidence model](docs/architecture-and-evidence.md)
