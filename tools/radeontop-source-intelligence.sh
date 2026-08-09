@@ -271,9 +271,41 @@ END { print "}" }
 dot -Tsvg "$output_dir/compiler-include-graph.dot" \
 	-o "$output_dir/compiler-include-graph.svg"
 
-rg -n --no-heading \
-	'(getgrbm|getsrbm|getvram|getgtt|getsclk|getmclk|read_status|read_uvd_status|read_vce_status|read_sclk|read_mclk|read_vram|read_gtt|wait_until|wake)[[:space:]]*=' \
+callback_binding_pattern='(getgrbm|getsrbm2|getsrbm|getvram|getgtt|getsclk|getmclk|read_status|read_uvd_status|read_vce_status|read_sclk|read_mclk|read_vram|read_gtt|wait_until|wake)[[:space:]]*='
+rg -n --no-heading "$callback_binding_pattern" \
 	-- ./*.c ./tests/*.c > "$output_dir/callback-bindings.txt"
+for required_binding in \
+	'getsrbm2 = getsrbm2_pci;' \
+	'getsrbm2 = getsrbm2_radeon;' \
+	'getsrbm2 = getsrbm2_amdgpu;'; do
+	grep -Fq "$required_binding" "$output_dir/callback-bindings.txt"
+done
+
+printf '%s\n' 'getsrbm2 = known_reader;' \
+	> "$output_dir/calibration-callback-binding-known-good-input.txt"
+printf '%s\n' 'getsrbm2(known_reader);' \
+	> "$output_dir/calibration-callback-binding-known-bad-input.txt"
+(
+	cd "$output_dir"
+	rg -n --no-heading "$callback_binding_pattern" \
+		calibration-callback-binding-known-good-input.txt \
+		> calibration-callback-binding-known-good.txt
+	set +e
+	rg -n --no-heading "$callback_binding_pattern" \
+		calibration-callback-binding-known-bad-input.txt \
+		> calibration-callback-binding-known-bad.txt
+	missing_binding_status=$?
+	set -e
+	if [ "$missing_binding_status" -eq 0 ]; then
+		echo "missing callback-binding mutation entered the inventory" >&2
+		exit 1
+	fi
+	if [ "$missing_binding_status" -ne 1 ]; then
+		echo "callback-binding mutation calibration failed" >&2
+		exit 1
+	fi
+	[ ! -s calibration-callback-binding-known-bad.txt ]
+)
 
 checksum_tmp=$(mktemp "${TMPDIR:-/tmp}/radeontop-source-map-sha256.XXXXXX")
 trap 'rm -f "$checksum_tmp"' 0 1 2 15

@@ -309,7 +309,8 @@ The bundle contains:
 - cscope, Universal Ctags, and GNU Global databases;
 - known-good `main` and known-bad missing-symbol calibration results;
 - compiler include dependencies as Make syntax, DOT, and SVG;
-- explicit callback-binding search results;
+- explicit callback-binding search results with known-good and missing-binding
+  calibration artifacts;
 - lizard and scc complexity inventories;
 - exact tool versions and a final internally verified `SHA256SUMS` manifest.
 
