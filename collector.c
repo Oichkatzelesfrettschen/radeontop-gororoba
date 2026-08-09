@@ -865,20 +865,18 @@ bool collector_peek(struct collector *collector, struct collector_snapshot *out)
 	return published;
 }
 
-bool collector_terminal_peek(struct collector *collector,
-		struct collector_terminal *out) {
-	bool recorded;
-
-	if (!collector || !out)
-		return false;
+int collector_state_peek(struct collector *collector,
+		struct collector_snapshot *snapshot_out,
+		struct collector_terminal *terminal_out) {
+	if (!collector || !collector->initialized || !snapshot_out || !terminal_out)
+		return -1;
 
 	pthread_mutex_lock(&collector->mutex);
-	recorded = collector->terminal.cause != COLLECTOR_TERMINAL_NONE;
-	if (recorded)
-		*out = collector->terminal;
+	*snapshot_out = collector->snapshot;
+	*terminal_out = collector->terminal;
 	pthread_mutex_unlock(&collector->mutex);
 
-	return recorded;
+	return 0;
 }
 
 const char *collector_terminal_cause_name(enum collector_terminal_cause cause) {

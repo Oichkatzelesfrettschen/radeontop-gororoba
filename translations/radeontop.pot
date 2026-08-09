@@ -414,149 +414,154 @@ msgstr ""
 msgid "radeontop %s, running on %s bus %02x, %u samples/sec"
 msgstr ""
 
-#: ui.c:230
+#: ui.c:226
+#, c-format
+msgid "The collector state is unavailable, stopping.\n"
+msgstr ""
+
+#: ui.c:235
 #, c-format
 msgid "Failed to read the display clock.\n"
 msgstr ""
 
-#: ui.c:281
+#: ui.c:286
 msgid "collector: device lost"
 msgstr ""
 
-#: ui.c:283
+#: ui.c:288
 msgid "collector: clock failed"
 msgstr ""
 
-#: ui.c:285
+#: ui.c:290
 msgid "collector: schedule failed"
 msgstr ""
 
-#: ui.c:288
+#: ui.c:293
 #, c-format
 msgid "gen %llu  age %.1fs  STALE"
 msgstr ""
 
-#: ui.c:292
+#: ui.c:297
 #, c-format
 msgid "gen %llu  age %.1fs  coverage %.1f%%  missed %llu  failed %llu"
 msgstr ""
 
-#: ui.c:305
+#: ui.c:310
 #, c-format
 msgid "Graphics pipe %6.2f%%"
 msgstr ""
 
-#: ui.c:311
+#: ui.c:316
 #, c-format
 msgid "Event Engine %6.2f%%"
 msgstr ""
 
-#: ui.c:318
+#: ui.c:323
 #, c-format
 msgid "Vertex Grouper + Tesselator %6.2f%%"
 msgstr ""
 
-#: ui.c:331
+#: ui.c:336
 #, c-format
 msgid "Texture Addresser %6.2f%%"
 msgstr ""
 
-#: ui.c:337
+#: ui.c:342
 #, c-format
 msgid "Texture Cache %6.2f%%"
 msgstr ""
 
-#: ui.c:347
+#: ui.c:352
 #, c-format
 msgid "Shader Export %6.2f%%"
 msgstr ""
 
-#: ui.c:352
+#: ui.c:357
 #, c-format
 msgid "Sequencer Instruction Cache %6.2f%%"
 msgstr ""
 
-#: ui.c:357
+#: ui.c:362
 #, c-format
 msgid "Shader Interpolator %6.2f%%"
 msgstr ""
 
-#: ui.c:363
+#: ui.c:368
 #, c-format
 msgid "Shader Memory Exchange %6.2f%%"
 msgstr ""
 
-#: ui.c:372
+#: ui.c:377
 #, c-format
 msgid "Scan Converter %6.2f%%"
 msgstr ""
 
-#: ui.c:376
+#: ui.c:381
 #, c-format
 msgid "Primitive Assembly %6.2f%%"
 msgstr ""
 
-#: ui.c:384
+#: ui.c:389
 #, c-format
 msgid "Depth Block %6.2f%%"
 msgstr ""
 
-#: ui.c:389
+#: ui.c:394
 #, c-format
 msgid "Color Block %6.2f%%"
 msgstr ""
 
-#: ui.c:395
+#: ui.c:400
 #, c-format
 msgid "Clip Rectangle %6.2f%%"
 msgstr ""
 
-#: ui.c:401
+#: ui.c:406
 #, c-format
 msgid "Command Stream %6.2f%%"
 msgstr ""
 
-#: ui.c:405
+#: ui.c:410
 #, c-format
 msgid "2D Engine %6.2f%%"
 msgstr ""
 
-#: ui.c:409
+#: ui.c:414
 #, c-format
 msgid "2D Backend %6.2f%%"
 msgstr ""
 
-#: ui.c:413
+#: ui.c:418
 #, c-format
 msgid "Cmd Fetch %6.2f%%"
 msgstr ""
 
-#: ui.c:417
+#: ui.c:422
 #, c-format
 msgid "UVD %6.2f%%"
 msgstr ""
 
-#: ui.c:421
+#: ui.c:426
 #, c-format
 msgid "VCE %6.2f%%"
 msgstr ""
 
-#: ui.c:431
+#: ui.c:436
 #, c-format
 msgid "%.0fM / %.0fM VRAM %6.2f%%"
 msgstr ""
 
-#: ui.c:439
+#: ui.c:444
 #, c-format
 msgid "%.0fM / %.0fM GTT %6.2f%%"
 msgstr ""
 
-#: ui.c:452
+#: ui.c:457
 #, c-format
 msgid "%.2fG / %.2fG Memory Clock %6.2f%%"
 msgstr ""
 
-#: ui.c:460
+#: ui.c:465
 #, c-format
 msgid "%.2fG / %.2fG Shader Clock %6.2f%%"
 msgstr ""

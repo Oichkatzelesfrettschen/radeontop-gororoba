@@ -1648,9 +1648,9 @@ static void case_terminal_after_publication_preserves_snapshot(void) {
 	CHECK(terminal.cause == COLLECTOR_TERMINAL_CLOCK_WAIT);
 	CHECK_U64(terminal.after_generation, published.generation);
 	CHECK(!terminal.read_result_valid);
-	CHECK(collector_peek(&harness.collector, &after_terminal));
+	CHECK(collector_state_peek(&harness.collector, &after_terminal,
+		&peeked) == 0);
 	CHECK(!memcmp(&retained, &after_terminal, sizeof(retained)));
-	CHECK(collector_terminal_peek(&harness.collector, &peeked));
 	CHECK(!memcmp(&terminal, &peeked, sizeof(terminal)));
 
 	// Snapshot delivery writes only snapshot_out even when the terminal record
@@ -1661,6 +1661,37 @@ static void case_terminal_after_publication_preserves_snapshot(void) {
 		&after_terminal, &sentinel) == COLLECTOR_WAIT_SNAPSHOT);
 	CHECK(!memcmp(&sentinel, &sentinel_copy, sizeof(sentinel)));
 	CHECK(!memcmp(&retained, &after_terminal, sizeof(retained)));
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+static void case_state_peek_pairs_terminal_with_bound_generation(void) {
+	struct harness harness;
+	struct collector_snapshot stale, latest, state_snapshot;
+	struct collector_terminal terminal, state_terminal;
+
+	current_case = "state_peek_pairs_terminal_with_bound_generation";
+	harness_init(&harness);
+	harness.clock.fail_wait_call = 3;
+	harness_start(&harness, 1, 1, COLLECTOR_CAP_STATUS);
+
+	CHECK(next_snapshot(&harness, 0, &stale) == COLLECTOR_WAIT_SNAPSHOT);
+	CHECK(next_snapshot(&harness, stale.generation, &latest) ==
+		COLLECTOR_WAIT_SNAPSHOT);
+	CHECK(next_terminal(&harness, latest.generation, &terminal) ==
+		COLLECTOR_WAIT_FATAL);
+	CHECK_U64(stale.generation, 1);
+	CHECK_U64(latest.generation, 2);
+
+	// The stale generation and later terminal calibrate the pair that two
+	// independent reads could expose to the UI.
+	CHECK(stale.generation < terminal.after_generation);
+	CHECK(collector_state_peek(&harness.collector, &state_snapshot,
+		&state_terminal) == 0);
+	CHECK_U64(state_snapshot.generation, latest.generation);
+	CHECK_U64(state_terminal.after_generation, state_snapshot.generation);
+	CHECK(!memcmp(&terminal, &state_terminal, sizeof(terminal)));
 
 	harness_stop(&harness);
 	harness_destroy(&harness);
@@ -1865,8 +1896,8 @@ static void case_fatal_sclk_stops_before_mclk(void) {
 
 static void case_fatal_endpoint_finishes_the_collector(void) {
 	struct harness harness;
-	struct collector_snapshot snapshot, retained, after_terminal;
-	struct collector_terminal terminal;
+	struct collector_snapshot snapshot, retained, state_snapshot;
+	struct collector_terminal terminal, state_terminal;
 
 	current_case = "fatal_endpoint_finishes_the_collector";
 	harness_init(&harness);
@@ -1886,8 +1917,10 @@ static void case_fatal_endpoint_finishes_the_collector(void) {
 	CHECK_U64(terminal.after_generation, snapshot.generation);
 	CHECK(terminal.read_result_valid);
 	CHECK(terminal.read_result == COLLECTOR_READ_FATAL);
-	CHECK(collector_peek(&harness.collector, &after_terminal));
-	CHECK(!memcmp(&retained, &after_terminal, sizeof(retained)));
+	CHECK(collector_state_peek(&harness.collector, &state_snapshot,
+		&state_terminal) == 0);
+	CHECK(!memcmp(&retained, &state_snapshot, sizeof(retained)));
+	CHECK(!memcmp(&terminal, &state_terminal, sizeof(terminal)));
 
 	// A fatal VRAM result already established the device is gone.
 	pthread_mutex_lock(&harness.backend.mutex);
@@ -2166,6 +2199,7 @@ int main(void) {
 	case_device_failure_precedes_sample_clock_failure();
 	case_device_failure_precedes_publication_clock_failure();
 	case_terminal_after_publication_preserves_snapshot();
+	case_state_peek_pairs_terminal_with_bound_generation();
 	case_consumer_wait_error_is_reported();
 	case_dither_rejects_modulo_bias();
 	case_dither_uses_exact_fractional_slot_width();

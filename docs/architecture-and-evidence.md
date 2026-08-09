@@ -273,6 +273,11 @@ record whose `after_generation` names it. Dump mode uses the contiguous-wait
 contract and fails when a delayed consumer observes a generation jump. A silent
 missing record never enters a successful research capture.
 
+The interactive UI copies the latest snapshot and terminal record under one
+collector mutex acquisition. A terminal whose `after_generation` names N
+therefore appears beside generation N, while an intermediate observation after
+publication and before terminal recording presents generation N as active.
+
 `# radeontop_run_end_v2` records the run UUID, logical exit reason, logical
 status, record count, last consumed generation, last observed committed
 collector generation, and a typed terminal cause. Only a device-read terminal

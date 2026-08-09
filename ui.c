@@ -218,12 +218,17 @@ int present(struct collector *collector, const struct engine_masks *masks,
 		move(1,0);
 		clrtobot();
 
-		// One published generation is one completed measurement window.
-		// The snapshot is copied whole under the collector's mutex, so
-		// every displayed figure comes from one window rather than from a
-		// structure the collector is still writing.
-		collector_peek(collector, &snapshot);
-		const bool terminal_observed = collector_terminal_peek(collector, &terminal);
+		// One mutex acquisition pairs the displayed generation with the terminal
+		// record that follows it.  A terminal after generation N appears beside
+		// generation N.
+		if (collector_state_peek(collector, &snapshot, &terminal) ||
+			!snapshot.generation) {
+			fprintf(stderr, _("The collector state is unavailable, stopping.\n"));
+			status = 1;
+			break;
+		}
+		const bool terminal_observed =
+			terminal.cause != COLLECTOR_TERMINAL_NONE;
 
 		struct timespec drawn_at;
 		if (clock_gettime(CLOCK_MONOTONIC, &drawn_at)) {

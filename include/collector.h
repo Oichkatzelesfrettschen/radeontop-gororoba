@@ -285,11 +285,15 @@ int collector_wait_next_contiguous(struct collector *collector,
 		struct collector_snapshot *snapshot_out,
 		struct collector_terminal *terminal_out);
 
-// Copies the current snapshot without waiting.  Returns false before the first
+// Copies one current snapshot without waiting.  Returns false before the first
 // generation publishes.
 bool collector_peek(struct collector *collector, struct collector_snapshot *out);
-bool collector_terminal_peek(struct collector *collector,
-		struct collector_terminal *out);
+
+// Copies the current snapshot and terminal record under one lock.  Generation
+// zero and COLLECTOR_TERMINAL_NONE represent their respective empty states.
+int collector_state_peek(struct collector *collector,
+		struct collector_snapshot *snapshot_out,
+		struct collector_terminal *terminal_out);
 const char *collector_terminal_cause_name(enum collector_terminal_cause cause);
 bool collector_terminal_cause_is_clock(enum collector_terminal_cause cause);
 
