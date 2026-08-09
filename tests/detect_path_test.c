@@ -278,8 +278,8 @@ int main(void) {
 	cleanup();
 	CHECK(unmap_count == 2);
 
-	// Forced bus discovery keeps the validated BAR while the DRM node supplies
-	// optional counters and a status reader for the same PCI identity.
+	// A matching Radeon DRM node initializes optional counters.
+	// The forced direct path retains the validated BAR for GRBM_STATUS reads.
 	drm_bus_open_succeeds = true;
 	drm_driver_is_radeon = true;
 	bus = -1;
