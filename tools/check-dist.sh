@@ -58,6 +58,10 @@ dirty_makefile_sha256=$(sha256sum "$fixture/Makefile" | awk '{print $1}')
 first_output="$scratch/output-one"
 second_output="$scratch/output-two"
 mkdir -p "$first_output" "$second_output"
+if make -C "$fixture" DIST_OUTPUT_DIR= dist >/dev/null 2>&1; then
+	echo "distribution accepted an implicit output directory" >&2
+	exit 1
+fi
 make -C "$fixture" DIST_OUTPUT_DIR="$first_output" dist >/dev/null
 post_dist_makefile_sha256=$(sha256sum "$fixture/Makefile" | awk '{print $1}')
 if [ "$post_dist_makefile_sha256" != "$dirty_makefile_sha256" ]; then
@@ -178,4 +182,4 @@ if make -C "$export_root" include/version.h nls=0 xcb=0 amdgpu=0 \
 	exit 1
 fi
 
-echo "distribution: deterministic export accepted, mutations rejected"
+echo "distribution: explicit deterministic export accepted, implicit and mutated outputs rejected"

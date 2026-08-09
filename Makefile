@@ -17,7 +17,7 @@ LIBDIR ?= lib
 MANDIR ?= share/man
 DATADIR ?= share/radeontop
 APPDATADIR ?= share/metainfo
-DIST_OUTPUT_DIR ?= /tmp
+DIST_OUTPUT_DIR ?=
 # xgettext otherwise injects the wall clock into a tracked source artifact.
 # This date identifies the template revision and changes with its messages.
 POT_CREATION_DATE ?= 2026-08-09 00:00+0000
@@ -287,6 +287,10 @@ dist:
 	epoch=$$(git show -s --format=%ct HEAD); \
 	name="$(bin)-$$version"; \
 	output_dir="$(DIST_OUTPUT_DIR)"; \
+	test -n "$$output_dir" || { \
+		echo "DIST_OUTPUT_DIR must name an output directory" >&2; \
+		exit 2; \
+	}; \
 	mkdir -p "$$output_dir"; \
 	output_dir=$$(CDPATH='' cd -- "$$output_dir" && pwd -P); \
 	scratch=$$(mktemp -d "$${TMPDIR:-/tmp}/radeontop-dist.XXXXXX"); \
