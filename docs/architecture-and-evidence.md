@@ -312,6 +312,50 @@ are `1185713e90bfd1af74c408487ea6d47bdf5e88a9ef0229ac714cfb9d49f5d0e0`
 and `e11f91ed4911911a0651a8f9ba0b5cbc0b470472d4aeafe107552c51d355861f`.
 These hashes identify source inputs, not silicon-run artifacts.
 
+Commit `870b22da8cc3070186927e5fea22196f88dd7c76` on merged
+`steinmarder-r300` `main` retains the decision-grade candidate capture and its
+active finding:
+
+```text
+steinmarder-r300:src/re/r300/results/cachyos_vostro1000_rs482_rbbm_status_mmio_capture_20260809T185637Z
+steinmarder-r300:src/re/r300/findings/active/rs482-rbbm-status-mmio-capture-observability.md
+```
+
+The SHA-256 of the outer `bundle_hashes.sha256` manifest is
+`5ab48d99b4cebfe0d7183e5bf3478cd6147154d56e717cc8fba2e8ac02a193a7`.
+The calibrated analyzer accepts the intact finite denominator and rejects six
+known-bad mutation classes covering stale hashes, semantic slot accounting,
+executed binary identity, post-map privilege, mapped DSO identity, and original
+manifest preimages.
+
+The retained run binds candidate
+`f9d9e4719e3a25b7d8d3b3c7ff7bac99c2a2b189` to RS482 PCI `1002:5974`,
+subsystem `1028:022a`, on boot
+`da747e8a-2cff-47ac-bb5b-50d7e7ce7313`. The trace opens only resource2,
+maps 3668 bytes read-only through `RBBM_STATUS` at `0x0e40`, and records the
+permanent real, effective, and saved UID transition to 1000 before collection.
+The kernel delta and hazard match set are empty, and the display and renderer
+remain live. No GA, ZB, or broad `0x4xxx` register read enters the run.
+
+At 120 Hz, each default, explicit `-p`, and explicit `-p -m` texture capture
+attempts all 600 nominal reads. Default discovery and explicit `-p -m` report
+100.000 percent `GUI_ACTIVE`; explicit `-p` reports 99.667 percent. `VGT_BUSY`
+spans 12.500 to 13.167 percent while the load remains live at 104 to 105 frames
+per second. At 1000 Hz, the dithered run attempts 4107 of 5000 slots, so its
+conditional `GUI_ACTIVE` coefficient of 99.464 percent carries the
+unconditional interval of 81.700 to 99.560 percent. The candidate records
+400000 kHz SCLK and 200000 kHz MCLK; the control rounds the same kernel MHz
+inputs to zero.
+
+The finding remains active and `canonical: false`. Its retained bundle admits
+the exact candidate, target, boot, and workload result; it makes no universal
+claim for R600, amdgpu, unobserved backend bits, or the RS482 2D lanes. The
+broad glmark2 control is mixed because three other scenes fail and several
+remain unknown without a pre-run baseline. The signed publication offset also
+remains a source-semantics follow-up: the 120 Hz records lie 7.245 to 8.229 ms
+before the nominal half-open window end, while the 1000 Hz offsets span 0.634 ms
+before to 0.007 ms after it.
+
 The June 10 backend-bit finding is active and `canonical: false`:
 
 ```text
@@ -347,14 +391,15 @@ substitute for a target result.
 | Claim | Required gate | Current class |
 |---|---|---|
 | Unknown PCI IDs cannot reach direct MMIO | pure layout rejection plus source path audit | unit-tested source |
-| DRM/XCB work runs unprivileged | credential trace of the setuid installation | target run pending |
-| RS482 reads `RBBM_STATUS` through resource2 | same-boot idle and named-load capture | target run pending for this tree |
-| Radeon clocks use one unit | kernel ABI source plus conversion tests | source-backed and unit-tested |
+| RS482 collection runs without saved privilege | credential trace of the setuid installation | target-verified for the direct path |
+| RS482 reads `RBBM_STATUS` through resource2 | same-boot idle and named-load capture | target-verified for candidate `f9d9e471` |
+| Radeon clocks use one unit | kernel ABI source, conversion tests, and same-boot control | source-backed, unit-tested, and target-verified on RS482 |
 | amdgpu and R600 behavior remains equivalent | runs on exact amdgpu and R600 parts | hardware unavailable |
-| Capture records parse as intended | C formatter controls plus Python JSON parse and byte round trip | unit-tested; target replay pending |
-| Missing-data bounds contain the true state under synthetic loss | correlated-failure mutations | unit-tested arithmetic; mutation gate pending |
+| Capture records parse as intended | C formatter controls plus Python JSON parse and byte round trip | unit-tested and target-replayed |
+| Missing-data bounds contain every missed-slot assignment | arithmetic mutations plus a lossy target run | unit-tested and retained as a bounded target interval |
 | Dither removes phase lock without selection bias | attempted/accepted phase histograms under injected lateness | unresolved |
 | Backend and 2D bits expose on RS482 | higher-rate, load-identified register capture | unresolved |
+| Publication timing names its signed endpoint relation | virtual-clock oracle plus signed target offsets | target deviation retained; source contract unresolved |
 
 The next implementation work concentrates on the unresolved rows rather than
 adding new gauges. `docs/open-work.md` orders the mechanism-specific actions and

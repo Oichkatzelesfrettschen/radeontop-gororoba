@@ -92,9 +92,37 @@ restate one asks for a narrower contract or evidence class.
   collective, and OARS rating. Installation places it under `share/metainfo`,
   and the analysis workflow runs the pedantic offline validator.
 
+## Admitted RS482 target evidence
+
+Commit `870b22da8cc3070186927e5fea22196f88dd7c76` on merged
+`steinmarder-r300` `main` retains the exact candidate run at:
+
+```text
+steinmarder-r300:src/re/r300/results/cachyos_vostro1000_rs482_rbbm_status_mmio_capture_20260809T185637Z
+```
+
+`docs/architecture-and-evidence.md` owns the exact claim-to-evidence mapping,
+outer manifest digest, and bounded measurements. The bundle closes these two
+target gates for candidate `f9d9e471`:
+
+- The setuid-origin trace opens and maps only resource2 through
+  `RBBM_STATUS` at `0x0e40`, then proves real, effective, and saved UID 1000
+  with zero permitted and effective capabilities in both live process threads.
+- The same-boot control and candidate captures retain run and boot UUIDs, exact
+  BDF and subsystem identity, source and build manifests, executed binary
+  hashes, command vectors, live-load witnesses, kernel before/after data,
+  hazard search, JSON records and footers, locks, synchronization, and nested
+  and outer SHA-256 manifests.
+
+The 120 Hz paths cover every slot under the sustained texture load. The 1000 Hz
+dithered path services 4107 of 5000 slots, so its missing-data interval remains
+the high-rate result. The broad glmark2 control remains mixed, and the signed
+publication offset remains a naming and consumer-semantics follow-up. These
+bounded residuals do not reopen the admitted direct path or clock-unit result.
+
 ## Target reports awaiting evidence admission
 
-The numerical reports below come from target-local runs. Their raw
+The older numerical reports below come from target-local runs. Their raw
 bundles remain absent from the canonical evidence repository, and the related
 `steinmarder-r300` findings are active with `canonical: false`. The reports
 define reproduction targets and falsifiers; they do not constitute admitted
@@ -299,25 +327,6 @@ workflow proves only same-job equality at a pinned `SOURCE_DATE_EPOCH`.
 
 ## Gated on RS482 target hardware
 
-### MMIO privilege boundary
-
-Install the exact candidate binary setuid-root in a temporary target-only path
-and invoke it as the ordinary user. Capture `/proc/<pid>/status` credentials at
-DRM discovery, resource open/map, collector execution, and dump output. The
-gate requires the saved root identity only during the resource interval and
-`Uid` real/effective/saved equality afterward. A `sudo` invocation is not this
-test because its real UID is already zero.
-
-### Same-boot control and candidate capture
-
-Build the control merge and candidate source in isolated target worktrees. Hold
-one named graphics load alive across interleaved control/candidate passes.
-Record run UUID, boot UUID, BDF, source versions, kernel and DRM versions,
-source commit and state, source and build digests, binary hash, commands, load
-liveness, dmesg before/after, hazard grep, raw output, run-end record, and
-SHA-256 manifests. Reads stay confined to resource2 offset `0x0e40`. The boot
-UUID and hazard delta remain stable.
-
 ### Read-latency discriminator
 
 Costs of 341 to 913 microseconds appear against typical costs below 60 and vary
@@ -354,7 +363,8 @@ paths behaviorally identical.
 
 `docs/rs4xx-engine-busy-read-path.md` owns the register-mapping model. Retained
 probes, result bundles, hazard policy, and target-silicon verdicts live in
-`steinmarder-r300` under `src/re/r300/`. A completed target run enters that
-repository with `run_manifest.json`, `bundle_manifest.json`,
-`bundle_hashes.sha256`, boot continuity, exact commands, and off-box capture
-before radeontop-gororoba cites it as decision-grade evidence.
+`steinmarder-r300` under `src/re/r300/`. The admitted candidate bundle above
+contains `run_manifest.json`, `bundle_manifest.json`, `bundle_hashes.sha256`,
+boot continuity, exact commands, and off-box capture. Future target runs satisfy
+the same contract before radeontop-gororoba cites them as decision-grade
+evidence.

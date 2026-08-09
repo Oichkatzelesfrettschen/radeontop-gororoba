@@ -57,10 +57,10 @@ is an independent guard for a BAR too small to decode the mapped window.
 
 `RBBM_STATUS` at `0x0E40` sits inside the window mapped at offset 0 for the SRBM
 registers (`SRBM_MMAP_SIZE = 0xE54`), so `getgrbm_pci_r300` reads it from
-`srbm_area` without a second mapping. Active `steinmarder-r300` findings report
-completed direct reads and the idle word `0x00000140`, and the hazard policy
-admits RBBM_STATUS offset `0x0E40`. Those findings lack a complete decision-grade run bundle,
-so the candidate capture in `docs/open-work.md` owns the admission gate.
+`srbm_area` without a second mapping. The decision-grade `steinmarder-r300`
+capture for candidate `f9d9e471` maps exactly 3668 bytes read-only, opens only
+resource2, and retains a stable boot and empty kernel hazard delta. The hazard
+policy admits `RBBM_STATUS` offset `0x0E40`; no other offset enters the capture.
 
 `radeontop -m` forces the family-validated direct MMIO path. With `-p`, the DRM
 node selects an exact PCI BDF and `-m` forces the direct path for that same BDF.
@@ -101,8 +101,11 @@ revision remains a separate run-identity field.
 Target observation is the finite histogram reported by the active,
 noncanonical finding in `Provenance` below. "Set" means the finding records the
 bit set in at least one sample; "clear" means the finding records it clear in
-every sampled workload. The absent raw bundle bounds this to a claim input
-rather than admitted decision-grade silicon evidence.
+every sampled workload. That histogram's absent raw bundle bounds the bit map to
+a claim input rather than decision-grade silicon evidence. The admitted
+candidate capture retains per-window lane counts rather than the histogram's
+individual raw words, so it validates the read path without silently promoting
+the older bit-exposure rows.
 
 | Bit | `r300d.h` field | Field kind | Target observation | radeontop lane | Exposed |
 |---|---|---|---|---|---|
@@ -151,6 +154,23 @@ R300-side names are `VAP`, `CF pipe`, and `RB2D or CBA2D`, and the rendered
 labels are interpretations layered on those.
 
 ## Provenance
+
+Commit `870b22da8cc3070186927e5fea22196f88dd7c76` on merged
+`steinmarder-r300` `main` retains the candidate acceptance bundle and finding:
+
+```text
+steinmarder-r300:src/re/r300/results/cachyos_vostro1000_rs482_rbbm_status_mmio_capture_20260809T185637Z
+steinmarder-r300:src/re/r300/findings/active/rs482-rbbm-status-mmio-capture-observability.md
+```
+
+The SHA-256 of its outer `bundle_hashes.sha256` is
+`5ab48d99b4cebfe0d7183e5bf3478cd6147154d56e717cc8fba2e8ac02a193a7`.
+The bundle binds the exact source and executed binaries, target identity, boot,
+commands, live texture load, resource2 mapping, permanent privilege removal,
+kernel delta, JSON accounting, and manifest preimages. It admits the
+`RBBM_STATUS` read path and the exposed GUI and VGT measurements for that run.
+It does not retain each raw register word needed to replace the field table's
+older histogram.
 
 The rank-1 histogram report lives at
 `steinmarder-r300:src/re/r300/findings/active/2026-06-10-rs482-rbbm-backend-busy-bits-nonlatching-under-load.md`,
@@ -385,7 +405,7 @@ from the splitmix64-to-slot projection.
 radeontool regmatch 0xe40                # raw register histogram, sibling tool
 ```
 
-Loads used for the retained observations:
+Loads used for the reported histogram observations:
 
 ```sh
 glmark2-es2 --benchmark texture          # sustained textured fill, 126 FPS
@@ -481,11 +501,11 @@ and raw output remain absent from `steinmarder-r300`. The figures therefore rest
 on the report rather than a retained artifact and establish no admitted rate.
 The `1000000` parser bound remains arithmetic and carries no silicon claim.
 
-Not run: the permanent privilege drop, which needs a setuid-root installed binary
-because a process launched through `sudo` already has real uid 0 and can only
-drop to 0; and the `libdrm_amdgpu` and radeon-ioctl paths, for which no part is
-reachable, leaving their `-errno` classification reasoned from API convention and
-exercised only by the synthetic backend.
+The decision-grade candidate bundle proves the permanent privilege drop with a
+setuid-root installed binary invoked by UID 1000. The `libdrm_amdgpu` and
+radeon-ioctl paths remain not run because no reachable part exposes either
+hardware path; their `-errno` classification remains reasoned from API
+convention and exercised only by the synthetic backend.
 
 ## Open work
 
