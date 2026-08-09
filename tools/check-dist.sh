@@ -21,7 +21,7 @@ if [ "${1:-}" != "--self-test" ] || [ "$#" -ne 1 ]; then
 	exit 2
 fi
 
-for required_tool in git gzip make sha256sum tar; do
+for required_tool in git gzip make sha256sum stat tar; do
 	if ! command -v "$required_tool" >/dev/null 2>&1; then
 		echo "required distribution tool is unavailable: $required_tool" >&2
 		exit 2
@@ -39,7 +39,7 @@ mkdir -p "$fixture"
 git -C "$repo_root" ls-files -z --cached > "$working_tree_paths"
 tar --null -C "$repo_root" --files-from="$working_tree_paths" \
 	-cf "$working_tree_tar"
-tar -xf "$working_tree_tar" -C "$fixture"
+tar --same-permissions -xf "$working_tree_tar" -C "$fixture"
 
 git -C "$fixture" init -q
 git -C "$fixture" config user.name 'RadeonTop distribution test'
@@ -62,14 +62,14 @@ if make -C "$fixture" DIST_OUTPUT_DIR= dist >/dev/null 2>&1; then
 	echo "distribution accepted an implicit output directory" >&2
 	exit 1
 fi
-make -C "$fixture" DIST_OUTPUT_DIR="$first_output" dist >/dev/null
+(umask 077; make -C "$fixture" DIST_OUTPUT_DIR="$first_output" dist >/dev/null)
 post_dist_makefile_sha256=$(sha256sum "$fixture/Makefile" | awk '{print $1}')
 if [ "$post_dist_makefile_sha256" != "$dirty_makefile_sha256" ]; then
 	echo "distribution changed the tracked Makefile" >&2
 	exit 1
 fi
 
-make -C "$fixture" DIST_OUTPUT_DIR="$second_output" dist >/dev/null
+(umask 022; make -C "$fixture" DIST_OUTPUT_DIR="$second_output" dist >/dev/null)
 first_archive="$first_output/$archive_name"
 second_archive="$second_output/$archive_name"
 first_sidecar="$first_archive.sha256"
@@ -111,11 +111,15 @@ fi
 
 extract_root="$scratch/extract"
 mkdir -p "$extract_root"
-tar -xzf "$first_archive" -C "$extract_root"
+tar --same-permissions -xzf "$first_archive" -C "$extract_root"
 export_root="$extract_root/radeontop-$fixture_version"
 export_metadata="$export_root/include/radeontop-source-export.mk"
 if [ ! -f "$export_metadata" ]; then
 	echo "distribution source identity is missing" >&2
+	exit 1
+fi
+if [ "$(stat -c %a "$export_metadata")" != 644 ]; then
+	echo "distribution source identity mode is not 0644" >&2
 	exit 1
 fi
 grep -Fxq "VERSION ?= $fixture_version" "$export_metadata"

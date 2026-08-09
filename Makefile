@@ -301,12 +301,13 @@ dist:
 	mkdir -p "$$export_root/include"; \
 	chmod 755 "$$export_root"; \
 	git archive --format=tar --output="$$scratch/source.tar" "$$commit"; \
-	tar -xf "$$scratch/source.tar" -C "$$export_root"; \
+	tar --same-permissions -xf "$$scratch/source.tar" -C "$$export_root"; \
 	{ \
 		printf 'VERSION ?= %s\n' "$$version"; \
 		printf 'SOURCE_COMMIT ?= %s\n' "$$commit"; \
 		printf '%s\n' 'SOURCE_STATE ?= clean'; \
 	} > "$$export_root/$(source_export_metadata)"; \
+	chmod 0644 "$$export_root/$(source_export_metadata)"; \
 	tar --sort=name --mtime="@$$epoch" --owner=0 --group=0 --numeric-owner \
 		-C "$$scratch" -cf "$$scratch/archive.tar" "$$name"; \
 	archive_output=$$(mktemp "$$output_dir/.radeontop-dist.XXXXXX"); \
