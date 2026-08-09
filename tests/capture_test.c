@@ -284,6 +284,83 @@ static void check_exclusive_stream_lock(void) {
 	CHECK(unlink(path) == 0);
 }
 
+static void check_append_record_boundary(void) {
+	char path[PATH_MAX];
+	const int descriptor = create_temporary_capture_file(path);
+	FILE *stream;
+	char output[128];
+	int pipe_descriptors[2];
+	int pipe_status;
+
+	CHECK(descriptor >= 0);
+	if (descriptor < 0)
+		return;
+	stream = fdopen(descriptor, "a+");
+	CHECK(stream != NULL);
+	if (!stream) {
+		close(descriptor);
+		unlink(path);
+		return;
+	}
+
+	CHECK(radeontop_capture_write_append_boundary(stream) == 0);
+	CHECK(read_stream(stream, output, sizeof(output)));
+	CHECK(!strcmp(output, ""));
+	CHECK(fseek(stream, 0, SEEK_END) == 0);
+	CHECK(fputs("complete\n", stream) != EOF);
+	CHECK(radeontop_capture_write_append_boundary(stream) == 0);
+	CHECK(read_stream(stream, output, sizeof(output)));
+	CHECK(!strcmp(output, "complete\n\n"));
+
+	CHECK(ftruncate(fileno(stream), 0) == 0);
+	CHECK(fseek(stream, 0, SEEK_SET) == 0);
+	CHECK(fputs("truncated", stream) != EOF);
+	CHECK(radeontop_capture_write_append_boundary(stream) == 0);
+	CHECK(fputs("# next-header\n", stream) != EOF);
+	CHECK(read_stream(stream, output, sizeof(output)));
+	CHECK(!strcmp(output, "truncated\n# next-header\n"));
+	CHECK(fclose(stream) == 0);
+
+	stream = fopen(path, "w");
+	CHECK(stream != NULL);
+	if (stream) {
+		CHECK(fputs("write-only-tail", stream) != EOF);
+		CHECK(fclose(stream) == 0);
+	}
+	stream = fopen(path, "a");
+	CHECK(stream != NULL);
+	if (stream) {
+		CHECK(radeontop_capture_write_append_boundary(stream) == 0);
+		CHECK(fputs("# redirected-stdout-header\n", stream) != EOF);
+		CHECK(fclose(stream) == 0);
+	}
+	stream = fopen(path, "r");
+	CHECK(stream != NULL);
+	if (stream) {
+		CHECK(read_stream(stream, output, sizeof(output)));
+		CHECK(!strcmp(output,
+			"write-only-tail\n# redirected-stdout-header\n"));
+		CHECK(fclose(stream) == 0);
+	}
+	CHECK(unlink(path) == 0);
+
+	pipe_status = pipe(pipe_descriptors);
+	CHECK(pipe_status == 0);
+	if (!pipe_status) {
+		FILE *pipe_stream = fdopen(pipe_descriptors[1], "w");
+
+		CHECK(pipe_stream != NULL);
+		if (pipe_stream) {
+			CHECK(radeontop_capture_write_append_boundary(pipe_stream) == 0);
+			CHECK(fclose(pipe_stream) == 0);
+		} else {
+			close(pipe_descriptors[1]);
+		}
+		CHECK(close(pipe_descriptors[0]) == 0);
+	}
+	CHECK(radeontop_capture_write_append_boundary(NULL) != 0);
+}
+
 static int emit_json_fixture(void) {
 	char encoded_argument[] = {
 		'u', 't', 'f', '8', ':', (char) 0xc3, (char) 0xa9,
@@ -431,6 +508,7 @@ int main(int argc, char **argv) {
 	check_snapshot_evidence();
 	check_system_metadata();
 	check_exclusive_stream_lock();
+	check_append_record_boundary();
 	CHECK(radeontop_capture_path_is_stdout("-"));
 	CHECK(!radeontop_capture_path_is_stdout("-capture.log"));
 	CHECK(!radeontop_capture_path_is_stdout(""));

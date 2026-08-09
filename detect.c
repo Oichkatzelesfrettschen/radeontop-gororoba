@@ -451,7 +451,7 @@ static void open_drm_bus(struct radeon_device_identity *identity) {
 		// Only worth reporting when no established DRM pass bound the
 		// memory counters; on the R300-class fallback path the bus open
 		// can fail after VRAM/GTT already bound through find_drm.
-		printf(_("Failed to open DRM node, no VRAM support.\n"));
+		fputs(_("Failed to open DRM node, no VRAM support.\n"), stderr);
 }
 
 static enum drm_open_result open_drm_path(const char *path,
@@ -609,7 +609,7 @@ void init_pci(const char *path, short *bus,
 				open_drm_bus(identity);
 
 			if (forcemem)
-				printf(_("Forcing the direct MMIO register path.\n"));
+				fputs(_("Forcing the direct MMIO register path.\n"), stderr);
 
 			if (forcemem || getgrbm == getuint32_null)
 				open_pci(identity);

@@ -213,6 +213,14 @@ int dumpdata(struct collector *collector, const struct engine_masks *masks,
 		return 1;
 	}
 
+	if (radeontop_capture_write_append_boundary(f)) {
+		fputs(_("Failed writing the capture record boundary.\n"), stderr);
+		radeontop_capture_unlock_stream(f);
+		if (f != stdout)
+			fclose(f);
+		return 1;
+	}
+
 	if (radeontop_capture_write_header(f, metadata)) {
 		fputs(_("Failed writing the capture provenance header.\n"), stderr);
 		radeontop_capture_unlock_stream(f);

@@ -71,7 +71,10 @@ missed slots, capabilities, per-signal validity, clock means, endpoint states,
 lane denominators, and unconditional missing-data bounds. A
 `radeontop_run_end_v1` footer records the logical exit reason and the final
 collector state. The process holds an exclusive lock for a regular output file,
-including redirected stdout, and a generation gap makes the capture fail.
+including redirected stdout. A nonempty regular destination receives a newline
+record boundary before the next header, so a truncated prior record cannot
+absorb the new run identity. Runtime diagnostics use stderr, and a generation
+gap makes the capture fail.
 
 `--dither-seed N` selects a reproducible within-slot phase schedule. The
 generator uses rejection sampling, so every nanosecond in each exact rational

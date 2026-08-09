@@ -279,9 +279,12 @@ that wider contract.
 An output path equals stdout only when it is exactly `-`. A path such as
 `-capture.log` names a regular file. Regular descriptors carry an exclusive
 advisory lock for the whole run and receive `fsync` at the end, including when
-stdout redirects to a regular file. JSON strings escape quotes, backslashes,
-control bytes, and non-ASCII bytes, so an argument cannot inject a second
-header record and a consumer can recover each original argument byte.
+stdout redirects to a regular file. A nonempty regular descriptor receives one
+newline after the lock and before the new header. The boundary terminates a
+truncated prior record, so it cannot absorb the next run identity. Runtime
+diagnostics use stderr. JSON strings escape quotes, backslashes, control bytes,
+and non-ASCII bytes, so an argument cannot inject a second header record and a
+consumer can recover each original argument byte.
 
 The optional RS480 GART/MC line appears only when all three exact debugfs keys
 parse once with complete unsigned 32-bit values. Prefix aliases, duplicates,

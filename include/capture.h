@@ -79,6 +79,10 @@ int radeontop_capture_lock_stream(FILE *stream);
 int radeontop_capture_unlock_stream(FILE *stream);
 int radeontop_capture_sync_stream(FILE *stream);
 
+// A nonempty regular stream receives one newline before the next run header.
+// The boundary keeps a truncated prior record from absorbing that header.
+int radeontop_capture_write_append_boundary(FILE *stream);
+
 // Appends a machine-readable object to the legacy dump line.  The caller owns
 // the final newline so both representations describe one atomic window record.
 int radeontop_capture_write_snapshot_evidence(FILE *stream,

@@ -267,6 +267,20 @@ int radeontop_capture_sync_stream(FILE *stream) {
 	return 0;
 }
 
+int radeontop_capture_write_append_boundary(FILE *stream) {
+	struct stat status;
+
+	if (!stream || fflush(stream) || ferror(stream) ||
+		fstat(fileno(stream), &status))
+		return -1;
+	if (!S_ISREG(status.st_mode) || !status.st_size)
+		return 0;
+	if (fseek(stream, 0, SEEK_END))
+		return -1;
+
+	return fputc('\n', stream) == EOF ? -1 : 0;
+}
+
 int radeontop_capture_write_header(FILE *stream,
 		const struct radeontop_capture_metadata *metadata) {
 	const struct radeon_device_identity *identity;

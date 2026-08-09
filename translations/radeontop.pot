@@ -33,31 +33,31 @@ msgstr ""
 msgid "Failed to get shader clock"
 msgstr ""
 
-#: amdgpu.c:119 radeon.c:151
+#: amdgpu.c:120 radeon.c:151
 msgid "Failed to get memory clock"
 msgstr ""
 
-#: amdgpu.c:122
+#: amdgpu.c:123
 #, c-format
 msgid ""
 "Clock frequency reporting is disabled (amdgpu kernel driver 3.11.0 "
 "required)\n"
 msgstr ""
 
-#: amdgpu.c:124
+#: amdgpu.c:125
 #, c-format
 msgid "Clock frequency reporting is not compiled in (libdrm 2.4.79 required)\n"
 msgstr ""
 
-#: amdgpu.c:131 radeon.c:164
+#: amdgpu.c:132 radeon.c:164
 msgid "Failed to get VRAM size"
 msgstr ""
 
-#: amdgpu.c:141 radeon.c:174
+#: amdgpu.c:142 radeon.c:174
 msgid "Failed to get VRAM usage"
 msgstr ""
 
-#: amdgpu.c:146 radeon.c:179
+#: amdgpu.c:147 radeon.c:179
 msgid "Failed to get GTT usage"
 msgstr ""
 
@@ -74,136 +74,138 @@ msgid ""
 "press ENTER to continue\n"
 msgstr ""
 
-#: detect.c:67
+#: detect.c:76
 msgid "Failed to init pciaccess"
 msgstr ""
 
-#: detect.c:85
+#: detect.c:94
 #, c-format
 msgid "Failed to probe PCI device %04x:%02x:%02x.%u: %s\n"
 msgstr ""
 
-#: detect.c:198
-msgid "Direct MMIO has no validated layout for the selected Radeon PCI ID"
-msgstr ""
-
-#: detect.c:200
-msgid "Can't get the register area size"
+#: detect.c:117
+msgid "The family classifier returned an invalid PCI resource index"
 msgstr ""
 
 #: detect.c:210
+msgid "Direct MMIO has no validated layout for the selected Radeon PCI ID"
+msgstr ""
+
+#: detect.c:212
+msgid "Can't get the register area size"
+msgstr ""
+
+#: detect.c:222
 msgid "Register BAR is smaller than the status window"
 msgstr ""
 
-#: detect.c:228
+#: detect.c:240
 msgid "Cannot elevate privileges for direct MMIO access"
 msgstr ""
 
-#: detect.c:231
+#: detect.c:243
 msgid "Cannot access GPU registers, are you root?"
 msgstr ""
 
-#: detect.c:236 detect.c:258
+#: detect.c:248 detect.c:270
 msgid "mmap failed"
 msgstr ""
 
-#: detect.c:255
+#: detect.c:267
 msgid "Register BAR is smaller than the GRBM window"
 msgstr ""
 
-#: detect.c:263
+#: detect.c:275
 msgid "Failed to close the GPU register resource"
 msgstr ""
 
-#: detect.c:265
+#: detect.c:277
 msgid "Failed to drop effective privileges after direct MMIO setup"
 msgstr ""
 
-#: detect.c:296
+#: detect.c:308
 msgid "Failed to query driver version"
 msgstr ""
 
-#: detect.c:301
+#: detect.c:313
 #, c-format
 msgid "The DRM driver returned no name\n"
 msgstr ""
 
-#: detect.c:330
+#: detect.c:342
 #, c-format
 msgid "The DRM driver name is too long\n"
 msgstr ""
 
-#: detect.c:351
+#: detect.c:363
 #, c-format
 msgid "amdgpu support is not compiled in (libdrm 2.4.63 required)\n"
 msgstr ""
 
-#: detect.c:354
+#: detect.c:366
 #, c-format
 msgid "Unsupported driver %s\n"
 msgstr ""
 
-#: detect.c:394
+#: detect.c:406
 #, c-format
 msgid "The DRM device has no PCI bus identity\n"
 msgstr ""
 
-#: detect.c:398
+#: detect.c:410
 #, c-format
 msgid "The DRM device returned an invalid PCI bus identity\n"
 msgstr ""
 
-#: detect.c:406
+#: detect.c:418
 #, c-format
 msgid "Failed to init pciaccess: %s\n"
 msgstr ""
 
-#: detect.c:411
+#: detect.c:423
 #, c-format
 msgid "Failed to resolve the DRM device PCI identity\n"
 msgstr ""
 
-#: detect.c:436
-#, c-format
+#: detect.c:454
 msgid "Failed to open DRM node, no VRAM support.\n"
 msgstr ""
 
-#: detect.c:447
+#: detect.c:465
 #, c-format
 msgid "Failed to open %s: %s\n"
 msgstr ""
 
-#: detect.c:470
+#: detect.c:488
 msgid "Failed to find DRM devices"
 msgstr ""
 
-#: detect.c:475
+#: detect.c:493
 msgid "Failed to allocate memory for DRM\n"
 msgstr ""
 
-#: detect.c:478
+#: detect.c:496
 msgid "Failed to get DRM devices"
 msgstr ""
 
-#: detect.c:527
+#: detect.c:545
 msgid "Failed to get device info"
 msgstr ""
 
-#: detect.c:532
+#: detect.c:550
 #, c-format
 msgid "Unsupported bus type %d\n"
 msgstr ""
 
-#: detect.c:594
-#, c-format
+#: detect.c:612
 msgid "Forcing the direct MMIO register path.\n"
 msgstr ""
 
-#: detect.c:602
+#: detect.c:620
 msgid "Can't find Radeon cards"
 msgstr ""
 
-#: detect.c:605
+#: detect.c:623
 msgid "The selected Radeon device has no PCI identity"
 msgstr ""
 
@@ -226,32 +228,33 @@ msgid "Can't open file for writing."
 msgstr ""
 
 #: dump.c:210
-#, c-format
 msgid "Another capture owns the output file.\n"
 msgstr ""
 
 #: dump.c:217
-#, c-format
+msgid "Failed writing the capture record boundary.\n"
+msgstr ""
+
+#: dump.c:225
 msgid "Failed writing the capture provenance header.\n"
 msgstr ""
 
-#: dump.c:264 ui.c:147
+#: dump.c:272 ui.c:147
 #, c-format
 msgid "The collector lost the device, stopping.\n"
 msgstr ""
 
-#: dump.c:279 ui.c:151
+#: dump.c:287 ui.c:151
 #, c-format
 msgid "The collector wait failed, stopping.\n"
 msgstr ""
 
-#: dump.c:286
+#: dump.c:294
 #, c-format
 msgid "The capture lost a completed measurement window, stopping.\n"
 msgstr ""
 
-#: dump.c:296 dump.c:306
-#, c-format
+#: dump.c:303 dump.c:313
 msgid "Failed writing the dump output.\n"
 msgstr ""
 
