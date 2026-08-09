@@ -102,7 +102,18 @@ make
 make check
 make check-build-identity
 make check-cli-docs
+make check-dist
 make install PREFIX=/usr DESTDIR=/path/to/staging
+```
+
+`make dist` exports committed `HEAD` without changing the worktree. The archive
+carries its source object and version in a generated Makefile fragment, retains
+the identity recipe for the downstream compiler and flags, and writes a
+deterministic gzip stream plus a SHA-256 sidecar. `DIST_OUTPUT_DIR` selects the
+destination.
+
+```sh
+make dist DIST_OUTPUT_DIR=/path/to/output
 ```
 
 Build options take `1` to enable a lane:

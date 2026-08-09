@@ -22,6 +22,7 @@ supportable.
 | `rs480_observation.c` | Strict three-key debugfs intake | RS480 direct path | `tests/rs480_observation_test.c` |
 | `dump.c` | Generation wait, legacy rendering, evidence object, durable output | file or stdout | unit format tests plus target capture |
 | `ui.c` | Whole-snapshot terminal presentation | operator | compiler analysis and interactive run |
+| `tools/check-dist.sh` | Immutable source export, downstream identity regeneration, deterministic archive | release source consumers | clean and dirty fixtures plus digest mutation |
 | `tools/radeontop-source-intelligence.sh` | Bounded source maps and calibrated indexes | maintainers and audits | empty-output invocation plus hash manifest |
 
 The Makefile enumerates production translation units. A new root-level C file
@@ -237,6 +238,18 @@ capture embeds both manifest byte strings and their SHA-256 values, and
 installation retains the same bytes under `/usr/share/radeontop/`. A reader can
 therefore recompute each digest without access to the build host. A clean source
 commit supplies the content behind every source-manifest row.
+
+`make dist` exports committed `HEAD` through `git archive` into a temporary
+tree, then adds `include/radeontop-source-export.mk` with the exact Git
+description, object ID, and clean state. The exported Makefile loads that
+fragment and keeps `getver.sh` active, so each downstream build recomputes the
+source manifest over the archive bytes and recomputes the build manifest over
+its own compiler, flags, libraries, and options. The distribution target never
+edits the checkout. It normalizes path order, timestamp, ownership, and gzip
+metadata and publishes a SHA-256 sidecar. `tools/check-dist.sh` proves two
+exports are byte-identical, a dirty tracked Makefile survives unchanged and
+stays outside the archive, downstream flag changes alter only build identity,
+and source-object and archive mutations fail their gates.
 
 Each legacy data line ends with an `evidence_v1` JSON object. It repeats the run
 UUID and preserves exact slot accounting, capability bits, five signal

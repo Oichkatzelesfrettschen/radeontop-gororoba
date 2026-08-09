@@ -79,6 +79,12 @@ restate one asks for a narrower contract or evidence class.
   mutation changes the build digest, a dirty tree cannot assert clean state,
   and an exported source can carry an explicit immutable commit. Capture tests
   reject dirty, unknown, and non-object source identities.
+- The distribution target exports committed `HEAD` without editing the
+  worktree, carries source identity in a generated Makefile fragment, regenerates
+  build identity under downstream flags, normalizes archive metadata, and
+  publishes a SHA-256 sidecar. Its calibrated self-test proves deterministic
+  output, dirty-worktree preservation, and rejection of archive and source-ID
+  mutations.
 - The source-intelligence target emits hashed runtime and linked-test cflow,
   cscope, ctags, Global, compiler-include, callback, complexity, and tool-version
   products from one exact C/H denominator.
@@ -263,14 +269,6 @@ pipeline, and mutate the destination before validation. Generate a complete
 temporary block under `set -eu`, retain upstream input identity, validate exact
 sets, and replace atomically. Known-good, malformed, removed-family, and failed
 preprocessor fixtures calibrate the generator.
-
-### Non-destructive distribution archive
-
-`make dist` edits the tracked Makefile and restores it with `git checkout`, so a
-dirty user edit can be discarded. Build from `git archive` or a temporary export
-without modifying the checkout. The gate starts with a dirty tracked Makefile,
-produces the archive, and proves byte-identical pre/post worktree content. The
-archive carries SHA-256 rather than the legacy SHA-1-only sidecar.
 
 ### Packaged-source frontier
 

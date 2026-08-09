@@ -17,12 +17,18 @@ LIBDIR ?= lib
 MANDIR ?= share/man
 DATADIR ?= share/radeontop
 APPDATADIR ?= share/metainfo
+DIST_OUTPUT_DIR ?= /tmp
 # xgettext otherwise injects the wall clock into a tracked source artifact.
 # This date identifies the template revision and changes with its messages.
 POT_CREATION_DATE ?= 2026-08-09 00:00+0000
 
 nls ?= 1
 xcb ?= 1
+
+# A Git archive carries this generated fragment so downstream builds retain
+# the exact source object while regenerating identity for their own toolchain.
+source_export_metadata = include/radeontop-source-export.mk
+-include $(source_export_metadata)
 
 # VERSION stamps include/version.h and identifies the compiled sources.  A
 # packaging recipe passes the revision it pinned; an empty value leaves
@@ -114,6 +120,7 @@ endif
 # generated include/version.h stays out to avoid a circular digest.
 identity_inputs = Makefile getver.sh $(src) \
 	$(if $(filter 1,$(xcb)),auth_xcb.c) \
+	$(wildcard $(source_export_metadata)) \
 	$(filter-out $(verh),$(wildcard include/*.h))
 
 # On some distros, you might have to change this to ncursesw
@@ -121,7 +128,7 @@ LIBS += $(shell pkg-config --libs ncursesw 2>/dev/null || \
 		shell pkg-config --libs ncurses 2>/dev/null || \
 		echo "-lncurses")
 
-.PHONY: all check check-build-identity check-cli-docs clean install man dist \
+.PHONY: all check check-build-identity check-cli-docs check-dist clean install man dist \
 	source-intelligence FORCE
 
 all: $(bin)
@@ -155,12 +162,16 @@ check: $(tests)
 	./tests/privileges_test
 	./tests/rs480_observation_test
 	./tools/check-build-identity.sh --self-test
+	./tools/check-dist.sh --self-test
 
 check-build-identity:
 	./tools/check-build-identity.sh --self-test
 
 check-cli-docs: $(bin)
 	./tools/check-cli-docs.sh --self-test
+
+check-dist:
+	./tools/check-dist.sh --self-test
 
 tests/collector_test: tests/collector_test.c collector.c include/collector.h
 	$(CC) $(TEST_CFLAGS) $(CPPFLAGS) -Iinclude -pthread \
@@ -259,14 +270,43 @@ man:
 		exit 1; \
 	fi
 
-dist: ver = $(shell git describe)
-dist: name = $(bin)-$(ver)
-dist: clean $(verh)
-	sed -i '/\t\.\/getver.sh/d' Makefile
-	cd .. && \
-	ln -s $(bin) $(name) && \
-	tar -h --numeric-owner --exclude-vcs -cvf - $(name) | pigz -9 > /tmp/$(name).tgz && \
-	rm $(name)
-	advdef -z4 /tmp/$(name).tgz
-	git checkout Makefile
-	cd /tmp && sha1sum $(name).tgz > $(name).tgz.sha1
+dist:
+	@set -eu; \
+	version=$$(git describe --always HEAD); \
+	case "$$version" in \
+		''|*[!A-Za-z0-9._+~:-]*) \
+			echo "Git description cannot enter a source identity: $$version" >&2; \
+			exit 2; \
+			;; \
+	esac; \
+	commit=$$(git rev-parse --verify HEAD); \
+	epoch=$$(git show -s --format=%ct HEAD); \
+	name="$(bin)-$$version"; \
+	output_dir="$(DIST_OUTPUT_DIR)"; \
+	mkdir -p "$$output_dir"; \
+	output_dir=$$(CDPATH='' cd -- "$$output_dir" && pwd -P); \
+	scratch=$$(mktemp -d "$${TMPDIR:-/tmp}/radeontop-dist.XXXXXX"); \
+	archive_output=; \
+	sidecar_output=; \
+	trap 'rm -rf "$$scratch"; test -z "$$archive_output" || rm -f "$$archive_output"; test -z "$$sidecar_output" || rm -f "$$sidecar_output"' 0 1 2 15; \
+	export_root="$$scratch/$$name"; \
+	mkdir -p "$$export_root/include"; \
+	chmod 755 "$$export_root"; \
+	git archive --format=tar --output="$$scratch/source.tar" "$$commit"; \
+	tar -xf "$$scratch/source.tar" -C "$$export_root"; \
+	{ \
+		printf 'VERSION ?= %s\n' "$$version"; \
+		printf 'SOURCE_COMMIT ?= %s\n' "$$commit"; \
+		printf '%s\n' 'SOURCE_STATE ?= clean'; \
+	} > "$$export_root/$(source_export_metadata)"; \
+	tar --sort=name --mtime="@$$epoch" --owner=0 --group=0 --numeric-owner \
+		-C "$$scratch" -cf "$$scratch/archive.tar" "$$name"; \
+	archive_output=$$(mktemp "$$output_dir/.radeontop-dist.XXXXXX"); \
+	gzip -n -9 -c "$$scratch/archive.tar" > "$$archive_output"; \
+	mv -f "$$archive_output" "$$output_dir/$$name.tgz"; \
+	archive_output=; \
+	sidecar_output=$$(mktemp "$$output_dir/.radeontop-dist-sha256.XXXXXX"); \
+	( cd "$$output_dir" && sha256sum "$$name.tgz" ) > "$$sidecar_output"; \
+	mv -f "$$sidecar_output" "$$output_dir/$$name.tgz.sha256"; \
+	sidecar_output=; \
+	printf '%s\n' "$$output_dir/$$name.tgz" "$$output_dir/$$name.tgz.sha256"

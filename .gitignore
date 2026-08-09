@@ -8,6 +8,7 @@ radeontop-source-manifest.txt
 radeontop-source-manifest.txt.tmp
 radeontop-build-manifest.txt
 radeontop-build-manifest.txt.tmp
+radeontop-source-export.mk
 *.mo
 /src/
 /pkg/
