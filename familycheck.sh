@@ -35,12 +35,12 @@ extract_families() {
 
 	if ! awk -F, '
 		/^[[:space:]]*CHIPSET[[:space:]]*\(/ {
-			if (NF < 3) {
+			if (NF != 3 || $3 !~ /\)[[:space:]]*$/) {
 				malformed = 1
 				next
 			}
 			family = $3
-			sub(/\).*/, "", family)
+			sub(/\)[[:space:]]*$/, "", family)
 			gsub(/^[[:space:]]+|[[:space:]]+$/, "", family)
 			if (family == "") {
 				malformed = 1
@@ -154,5 +154,13 @@ if [ "${1:-}" = "--self-test" ]; then
 		exit 1
 	fi
 	printf '%s\n' \
-		"family check: known-good accepted; empty denominator, missing family, malformed row, and empty family rejected"
+		'CHIPSET(0x5974, 0, RS480)' \
+		'CHIPSET(0x5975, 0, RS480' > "$scratch/truncated-r300.h"
+	if verify_families "$scratch/truncated-r300.h" include/r600_pci_ids.h \
+		family_str.c include/device_model.h >/dev/null 2>&1; then
+		echo "negative control accepted a truncated CHIPSET row" >&2
+		exit 1
+	fi
+	printf '%s\n' \
+		"family check: known-good accepted; empty denominator, missing family, malformed row, empty family, and truncated row rejected"
 fi
