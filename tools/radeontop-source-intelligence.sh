@@ -44,7 +44,7 @@ fi
 mkdir -p "$output_dir"
 output_dir=$(CDPATH='' cd -- "$output_dir" && pwd)
 
-for tool in cflow cscope ctags readtags gtags global lizard scc dot unifdef \
+for tool in cflow cscope ctags readtags gtags global lizard scc dot \
 	git sha256sum pkg-config cc awk sed find sort wc grep rg basename cmp cp; do
 	command -v "$tool" >/dev/null 2>&1 || {
 		echo "required tool is unavailable: $tool" >&2
@@ -171,7 +171,6 @@ awk '/^\.\/[^/]+\.c$/ { print }' "$output_dir/c-source-files.txt" \
 	lizard --version
 	scc --version
 	dot -V 2>&1
-	unifdef -V 2>&1 | sed -n '1p'
 	cc --version | sed -n '1p'
 } > "$output_dir/tool-versions.txt"
 
@@ -245,19 +244,90 @@ configured_detect_source_valid() {
 
 	[ "$(grep -c '^int main(void)' "$configured_source")" -eq 1 ] &&
 		grep -Fq "$required_symbol" "$configured_source" &&
-		! grep -Fq "$excluded_symbol" "$configured_source"
+		! grep -Fq "$excluded_symbol" "$configured_source" &&
+		grep -Fq 'test_open(' "$configured_source" &&
+		! grep -Eq '(^|[^A-Za-z0-9_])open[[:space:]]*\(' "$configured_source"
+}
+
+configured_detect_origin_valid() {
+	configured_source=$1
+
+	awk '
+		/^# [0-9]+ "/ {
+			path = $3
+			gsub(/^"|"$/, "", path)
+			if (path != "tests/detect_path_test.c" &&
+				path != "tests/../detect.c")
+				invalid++
+			markers++
+		}
+		END { exit invalid || !markers }
+	' "$configured_source"
+}
+
+project_origin_preprocess() {
+	lane_flag=$1
+	configured_source=$2
+	diagnostics=$3
+
+	# The Makefile compiles this test with the same project include path and
+	# libdrm/libpciaccess flags.  Compiler preprocessing resolves the macros set
+	# inside the test before its textual detect.c inclusion.
+	# shellcheck disable=SC2086
+	cc -E -std=gnu11 $lane_flag -Iinclude $detect_compiler_flags \
+		tests/detect_path_test.c > "$preprocessor_output" 2> "$diagnostics"
+	[ ! -s "$diagnostics" ]
+
+	# System declarations obscure the project call map and produce cflow parser
+	# noise.  GCC line markers retain only the two project files that form this
+	# textual translation unit while preserving their source line identities.
+	awk '
+		/^# [0-9]+ "/ {
+			path = $3
+			gsub(/^"|"$/, "", path)
+			keep = path == "tests/detect_path_test.c" ||
+				path == "tests/../detect.c"
+			if (keep)
+				print
+			next
+		}
+		keep { print }
+	' "$preprocessor_output" > "$configured_source"
+	configured_detect_origin_valid "$configured_source"
 }
 
 # detect_path_test.c compiles into two executables under opposite values of
-# TEST_DRM_BUS_DISCOVERY.  A raw lexical union has two main definitions and
-# cannot represent either executable.  Line-preserving projections keep each
-# call graph bound to the same conditional lane that the Makefile compiles.
+# TEST_DRM_BUS_DISCOVERY.  The compiler produces one configured project-origin
+# translation unit per executable, so each graph carries the branches and
+# interposed calls its binary contains.
 legacy_detect_source=$output_dir/configured-detect-path-test.c
 modern_detect_source=$output_dir/configured-detect-drm-discovery-test.c
-unifdef -b -x2 -UTEST_DRM_BUS_DISCOVERY ./tests/detect_path_test.c \
-	> "$legacy_detect_source"
-unifdef -b -x2 -DTEST_DRM_BUS_DISCOVERY ./tests/detect_path_test.c \
-	> "$modern_detect_source"
+preprocessor_output=$(mktemp "${TMPDIR:-/tmp}/radeontop-detect-preprocessor.XXXXXX")
+checksum_tmp=
+cleanup() {
+	rm -f "$preprocessor_output"
+	if [ -n "$checksum_tmp" ]; then
+		rm -f "$checksum_tmp"
+	fi
+}
+trap cleanup 0 1 2 15
+detect_compiler_flags=
+for package in libdrm pciaccess; do
+	package_flags=$(pkg-config --cflags "$package") || {
+		echo "required pkg-config module is unavailable: $package" >&2
+		exit 1
+	}
+	detect_compiler_flags="$detect_compiler_flags $package_flags"
+done
+{
+	printf '%s\n' 'legacy=cc -E -std=gnu11 -UTEST_DRM_BUS_DISCOVERY -Iinclude [pkg-config libdrm pciaccess] tests/detect_path_test.c'
+	printf '%s\n' 'modern=cc -E -std=gnu11 -DTEST_DRM_BUS_DISCOVERY=1 -Iinclude [pkg-config libdrm pciaccess] tests/detect_path_test.c'
+	printf 'resolved_pkg_config_flags=%s\n' "$detect_compiler_flags"
+} > "$output_dir/configured-detect-preprocessor-command.txt"
+project_origin_preprocess -UTEST_DRM_BUS_DISCOVERY "$legacy_detect_source" \
+	"$output_dir/configured-detect-path-test-preprocessor.stderr"
+project_origin_preprocess -DTEST_DRM_BUS_DISCOVERY=1 "$modern_detect_source" \
+	"$output_dir/configured-detect-drm-discovery-test-preprocessor.stderr"
 configured_detect_source_valid "$legacy_detect_source" \
 	'initialize_pci_device' 'configure_drm_devices'
 configured_detect_source_valid "$modern_detect_source" \
@@ -273,20 +343,61 @@ if configured_detect_source_valid "$configured_detect_bad" \
 fi
 
 # Each test graph includes the production translation units compiled separately
-# or textually included behind an interposition boundary.  A test-only graph
-# hides the path from the harness into the contract under test and therefore is
-# not a complete executable call map.
+# or textually included behind an interposition boundary.  The configured detect
+# sources already contain their exact detect.c inclusion.  Adding raw detect.c
+# reintroduces the branch union that preprocessing removed.
 write_call_graph capture-test ./tests/capture_test.c ./capture.c \
 	./collector.c ./device_model.c
 write_call_graph collector-test ./tests/collector_test.c ./collector.c
-write_call_graph detect-path-test "$legacy_detect_source" ./detect.c \
+write_call_graph detect-path-test "$legacy_detect_source" \
 	./device_model.c ./rs480_observation.c
-write_call_graph detect-drm-discovery-test "$modern_detect_source" ./detect.c \
+write_call_graph detect-drm-discovery-test "$modern_detect_source" \
 	./device_model.c ./rs480_observation.c
 write_call_graph device-model-test ./tests/device_model_test.c ./device_model.c
 write_call_graph privileges-test ./tests/privileges_test.c ./privileges.c
 write_call_graph rs480-observation-test ./tests/rs480_observation_test.c \
 	./rs480_observation.c
+
+configured_detect_graph_valid() {
+	graph=$1
+	lane=$2
+
+	grep -Eq '(^|[[:space:]])main\(\)' "$graph" &&
+		grep -Eq '(^|[[:space:]])test_open\(\)' "$graph" &&
+		! grep -Eq '(^|[[:space:]])open\(\)' "$graph" || return 1
+
+	case "$lane" in
+		legacy)
+			! grep -Eq '(^|[[:space:]])(find_drm|device_info_drm)\(\)' "$graph"
+			;;
+		modern)
+			grep -Eq '(^|[[:space:]])find_drm\(\)' "$graph" &&
+				grep -Eq '(^|[[:space:]])device_info_drm\(\)' "$graph"
+			;;
+		*) return 1 ;;
+	esac
+}
+
+legacy_detect_graph=$output_dir/cflow-detect-path-test-forward.txt
+modern_detect_graph=$output_dir/cflow-detect-drm-discovery-test-forward.txt
+configured_detect_graph_valid "$legacy_detect_graph" legacy
+configured_detect_graph_valid "$modern_detect_graph" modern
+
+# Adding raw detect.c recreates the former unconfigured union.  The retained
+# negative control exposes modern discovery in the legacy graph and fails the
+# configured-graph predicate.
+cflow --all --include=_s --number --format=gnu "$legacy_detect_source" \
+	./detect.c ./device_model.c ./rs480_observation.c \
+	> "$output_dir/calibration-configured-detect-graph-known-bad.txt" \
+	2> "$output_dir/calibration-configured-detect-graph-known-bad.stderr"
+[ ! -s "$output_dir/calibration-configured-detect-graph-known-bad.stderr" ]
+grep -Eq '(^|[[:space:]])find_drm\(\)' \
+	"$output_dir/calibration-configured-detect-graph-known-bad.txt"
+if configured_detect_graph_valid \
+		"$output_dir/calibration-configured-detect-graph-known-bad.txt" legacy; then
+	echo "configured detect graph accepted a raw production union" >&2
+	exit 1
+fi
 
 sed "s#^\./#$repo_root/#" "$output_dir/source-files.txt" \
 	> "$output_dir/cscope.files"
@@ -433,7 +544,6 @@ printf '%s\n' 'getsrbm2(known_reader);' \
 )
 
 checksum_tmp=$(mktemp "${TMPDIR:-/tmp}/radeontop-source-map-sha256.XXXXXX")
-trap 'rm -f "$checksum_tmp"' 0 1 2 15
 (
 	cd "$output_dir"
 	find . -type f ! -name SHA256SUMS -print | sort |

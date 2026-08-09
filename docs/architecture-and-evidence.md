@@ -328,9 +328,10 @@ The bundle contains:
 - per-test forward and reverse cflow trees and graphs that include every
   production translation unit compiled separately or textually included by the
   corresponding harness;
-- line-preserving `unifdef` projections for the legacy bus-ID and modern
-  `TEST_DRM_BUS_DISCOVERY` executables, with a validator that rejects a lexical
-  union carrying two `main` definitions;
+- compiler-preprocessed project-origin translation units for the legacy bus-ID
+  and modern `TEST_DRM_BUS_DISCOVERY` executables, with source and graph
+  validators that reject a two-main source union and a raw `detect.c` graph
+  union;
 - cscope, Universal Ctags, and GNU Global databases;
 - known-good `main` and known-bad missing-symbol calibration results;
 - compiler include dependencies as Make syntax, DOT, and SVG;
@@ -355,10 +356,12 @@ a build dependency.
 
 These products prove lexical structure, indexed reachability, and the exact
 `TEST_DRM_BUS_DISCOVERY` branch selection represented by the two configured
-test projections. They do not prove every runtime build-option combination,
-runtime callback selection, a successful build, or a silicon behavior. The
-compiler matrix, unit suites, and target captures remain separate evidence
-classes.
+test translation units. The compiler expands macros and the project-origin
+filter omits system-header declarations while retaining GCC line markers for
+`tests/detect_path_test.c` and its textual `detect.c` inclusion. These products
+do not prove every runtime build-option combination, runtime callback selection,
+a successful build, or a silicon behavior. The compiler matrix, unit suites,
+and target captures remain separate evidence classes.
 
 ## RS482 evidence authority and stop-line
 
