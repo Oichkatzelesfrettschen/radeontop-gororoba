@@ -320,6 +320,9 @@ The bundle contains:
 - per-test forward and reverse cflow trees and graphs that include every
   production translation unit compiled separately or textually included by the
   corresponding harness;
+- line-preserving `unifdef` projections for the legacy bus-ID and modern
+  `TEST_DRM_BUS_DISCOVERY` executables, with a validator that rejects a lexical
+  union carrying two `main` definitions;
 - cscope, Universal Ctags, and GNU Global databases;
 - known-good `main` and known-bad missing-symbol calibration results;
 - compiler include dependencies as Make syntax, DOT, and SVG;
@@ -335,10 +338,12 @@ every other diagnostic, and retains the original bytes in `ctags.stderr`.
 Positive and negative symbol calibrations separately determine whether the C
 index is usable.
 
-These products prove lexical structure and indexed reachability. They do not
-prove a preprocessor variant, runtime callback selection, a successful build,
-or a silicon behavior. The compiler matrix, unit suites, and target captures
-remain separate evidence classes.
+These products prove lexical structure, indexed reachability, and the exact
+`TEST_DRM_BUS_DISCOVERY` branch selection represented by the two configured
+test projections. They do not prove every runtime build-option combination,
+runtime callback selection, a successful build, or a silicon behavior. The
+compiler matrix, unit suites, and target captures remain separate evidence
+classes.
 
 ## RS482 evidence authority and stop-line
 

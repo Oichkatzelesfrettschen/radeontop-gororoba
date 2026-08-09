@@ -44,7 +44,7 @@ fi
 mkdir -p "$output_dir"
 output_dir=$(CDPATH='' cd -- "$output_dir" && pwd)
 
-for tool in cflow cscope ctags readtags gtags global lizard scc dot \
+for tool in cflow cscope ctags readtags gtags global lizard scc dot unifdef \
 	git sha256sum pkg-config cc awk sed find sort wc grep rg basename; do
 	command -v "$tool" >/dev/null 2>&1 || {
 		echo "required tool is unavailable: $tool" >&2
@@ -101,6 +101,7 @@ find . -maxdepth 1 -type f -name '*.c' -print | sort \
 	lizard --version
 	scc --version
 	dot -V 2>&1
+	unifdef -V 2>&1 | sed -n '1p'
 	cc --version | sed -n '1p'
 } > "$output_dir/tool-versions.txt"
 
@@ -159,6 +160,40 @@ while IFS= read -r source_file; do
 done < "$output_dir/runtime-source-files.txt"
 write_call_graph runtime "$@"
 
+configured_detect_source_valid() {
+	configured_source=$1
+	required_symbol=$2
+	excluded_symbol=$3
+
+	[ "$(grep -c '^int main(void)' "$configured_source")" -eq 1 ] &&
+		grep -Fq "$required_symbol" "$configured_source" &&
+		! grep -Fq "$excluded_symbol" "$configured_source"
+}
+
+# detect_path_test.c compiles into two executables under opposite values of
+# TEST_DRM_BUS_DISCOVERY.  A raw lexical union has two main definitions and
+# cannot represent either executable.  Line-preserving projections keep each
+# call graph bound to the same conditional lane that the Makefile compiles.
+legacy_detect_source=$output_dir/configured-detect-path-test.c
+modern_detect_source=$output_dir/configured-detect-drm-discovery-test.c
+unifdef -b -x2 -UTEST_DRM_BUS_DISCOVERY ./tests/detect_path_test.c \
+	> "$legacy_detect_source"
+unifdef -b -x2 -DTEST_DRM_BUS_DISCOVERY ./tests/detect_path_test.c \
+	> "$modern_detect_source"
+configured_detect_source_valid "$legacy_detect_source" \
+	'initialize_pci_device' 'configure_drm_devices'
+configured_detect_source_valid "$modern_detect_source" \
+	'configure_drm_devices' 'initialize_pci_device'
+
+configured_detect_bad=$output_dir/calibration-configured-detect-known-bad.c
+awk '1' "$legacy_detect_source" "$modern_detect_source" \
+	> "$configured_detect_bad"
+if configured_detect_source_valid "$configured_detect_bad" \
+	'initialize_pci_device' '__radeontop_missing_symbol__'; then
+	echo "configured detect-source validator accepted a two-main union" >&2
+	exit 1
+fi
+
 # Each test graph includes the production translation units compiled separately
 # or textually included behind an interposition boundary.  A test-only graph
 # hides the path from the harness into the contract under test and therefore is
@@ -166,7 +201,9 @@ write_call_graph runtime "$@"
 write_call_graph capture-test ./tests/capture_test.c ./capture.c \
 	./collector.c ./device_model.c
 write_call_graph collector-test ./tests/collector_test.c ./collector.c
-write_call_graph detect-path-test ./tests/detect_path_test.c ./detect.c \
+write_call_graph detect-path-test "$legacy_detect_source" ./detect.c \
+	./device_model.c ./rs480_observation.c
+write_call_graph detect-drm-discovery-test "$modern_detect_source" ./detect.c \
 	./device_model.c ./rs480_observation.c
 write_call_graph device-model-test ./tests/device_model_test.c ./device_model.c
 write_call_graph privileges-test ./tests/privileges_test.c ./privileges.c
