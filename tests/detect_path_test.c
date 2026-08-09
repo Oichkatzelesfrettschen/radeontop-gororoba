@@ -271,6 +271,8 @@ int drmError(int error, const char *label) {
 int drmGetDevice2(int fd, uint32_t flags, drmDevicePtr *device) {
 	CHECK(flags == 0);
 	CHECK(device != NULL);
+	if (!device)
+		return -EINVAL;
 	if (fd == 10) {
 		*device = &supported_drm_device;
 		return 0;
@@ -284,6 +286,8 @@ int drmGetDevice2(int fd, uint32_t flags, drmDevicePtr *device) {
 
 void drmFreeDevice(drmDevicePtr *device) {
 	CHECK(device != NULL && *device != NULL);
+	if (!device || !*device)
+		return;
 	*device = NULL;
 }
 
@@ -294,6 +298,8 @@ int drmGetDevices2(uint32_t flags, drmDevicePtr devices[], int max_devices) {
 	if (!devices)
 		return enumerated_drm_device_count;
 	CHECK(max_devices >= enumerated_drm_device_count);
+	if (max_devices < enumerated_drm_device_count)
+		return -EINVAL;
 	for (device_index = 0; device_index < enumerated_drm_device_count;
 			device_index++)
 		devices[device_index] = enumerated_drm_devices[device_index];
@@ -303,6 +309,8 @@ int drmGetDevices2(uint32_t flags, drmDevicePtr devices[], int max_devices) {
 void drmFreeDevices(drmDevicePtr devices[], int count) {
 	CHECK(devices != NULL);
 	CHECK(count == enumerated_drm_device_count);
+	if (!devices)
+		return;
 }
 
 static void configure_drm_devices(bool include_supported) {
