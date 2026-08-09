@@ -433,15 +433,21 @@ static int device_info_busid(int fd, struct radeon_device_identity *identity) {
 
 static void open_drm_bus(struct radeon_device_identity *identity) {
 	char busid[32];
+	const int resource_index = identity->resource_index;
+	const uint64_t resource_size = identity->resource_size;
 	snprintf(busid, sizeof(busid), "pci:%04x:%02x:%02x.%u",
 			identity->domain, identity->bus, identity->device,
 			identity->function);
 
 	int fd = drmOpen(NULL, busid);
 
-	if (fd >= 0)
+	if (fd >= 0) {
 		(void) init_drm(fd, identity, false);
-	else if (getvram == getuint64_null)
+		// PCI discovery owns the pending direct layout.  DRM binds optional
+		// counters and a status reader without discarding that validated BAR.
+		identity->resource_index = resource_index;
+		identity->resource_size = resource_size;
+	} else if (getvram == getuint64_null)
 		// Only worth reporting when no established DRM pass bound the
 		// memory counters; on the R300-class fallback path the bus open
 		// can fail after VRAM/GTT already bound through find_drm.

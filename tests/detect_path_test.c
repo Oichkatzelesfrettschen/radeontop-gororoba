@@ -59,6 +59,8 @@ static unsigned int init_radeon_count;
 static unsigned int privilege_raise_count;
 static unsigned int privilege_drop_count;
 static unsigned int unmap_count;
+static bool drm_bus_open_succeeds;
+static bool drm_driver_is_radeon;
 static bool iterator_has_device;
 static unsigned char iterator_token;
 static uint32_t srbm_window[SRBM_MMAP_SIZE / sizeof(uint32_t)];
@@ -72,6 +74,13 @@ static struct pci_device selected_device;
 		failures++; \
 	} \
 } while (0)
+
+static int test_drm_status(uint32_t *out) {
+	if (!out)
+		return -1;
+	*out = UINT32_C(0xcafef00d);
+	return 0;
+}
 
 static int test_open(const char *path, int flags, ...) {
 	(void) flags;
@@ -118,16 +127,20 @@ static int test_munmap(void *address, size_t length) {
 }
 
 drmVersionPtr drmGetVersion(int fd) {
-	static char driver_name[] = "amdgpu";
+	static char amdgpu_driver_name[] = "amdgpu";
+	static char radeon_driver_name[] = "radeon";
 	static drmVersion version = {
 		.version_major = 3,
 		.version_minor = 64,
 		.version_patchlevel = 0,
 		.name_len = 6,
-		.name = driver_name
+		.name = amdgpu_driver_name
 	};
 
 	CHECK(fd == 10);
+	version.name = drm_driver_is_radeon ? radeon_driver_name :
+		amdgpu_driver_name;
+	version.name_len = strlen(version.name);
 	return &version;
 }
 
@@ -146,9 +159,9 @@ void drmFreeBusid(const char *bus_id) {
 
 int drmOpen(const char *name, const char *bus_id) {
 	(void) name;
-	(void) bus_id;
+	CHECK(!strcmp(bus_id, "pci:0000:01:00.0"));
 	drm_open_count++;
-	return -1;
+	return drm_bus_open_succeeds ? 10 : -1;
 }
 
 int pci_system_init(void) {
@@ -199,6 +212,7 @@ void init_radeon(int fd, int drm_major, int drm_minor, int family) {
 	(void) drm_minor;
 	(void) family;
 	init_radeon_count++;
+	getgrbm = test_drm_status;
 }
 
 int privileges_raise_effective(void) {
@@ -263,6 +277,44 @@ int main(void) {
 
 	cleanup();
 	CHECK(unmap_count == 2);
+
+	// Forced bus discovery keeps the validated BAR while the DRM node supplies
+	// optional counters and a status reader for the same PCI identity.
+	drm_bus_open_succeeds = true;
+	drm_driver_is_radeon = true;
+	bus = -1;
+	status = 0;
+	radeon_device_identity_init(&identity);
+	init_pci(NULL, &bus, &identity, 1);
+
+	CHECK(bus == 1);
+	CHECK(identity.pci_address_valid);
+	CHECK(identity.domain == 0 && identity.bus == 1 &&
+		identity.device == 0 && identity.function == 0);
+	CHECK(identity.vendor_id == VENDOR_AMD);
+	CHECK(identity.device_id == 0x6650);
+	CHECK(identity.family == BONAIRE);
+	CHECK(!strcmp(identity.drm_driver, "radeon"));
+	CHECK(identity.status_source == RADEON_STATUS_PCI_RESOURCE_GRBM);
+	CHECK(identity.status_register == GRBM_STATUS);
+	CHECK(identity.resource_index == 5);
+	CHECK(identity.resource_size == 0x10000);
+	CHECK(active_drm_fd == 10);
+	CHECK(getgrbm != getuint32_null);
+	CHECK(getgrbm(&status) == 0);
+	CHECK(status == UINT32_C(0xdeadbeef));
+	CHECK(explicit_open_count == 1);
+	CHECK(resource_open_count == 2);
+	CHECK(close_count == 3);
+	CHECK(drm_open_count == 1);
+	CHECK(authenticate_count == 1);
+	CHECK(init_radeon_count == 1);
+	CHECK(privilege_raise_count == 2);
+	CHECK(privilege_drop_count == 2);
+
+	cleanup();
+	CHECK(close_count == 4);
+	CHECK(unmap_count == 4);
 
 	printf("detect path: %u checks, %u failed\n", checks, failures);
 	return failures ? 1 : 0;
