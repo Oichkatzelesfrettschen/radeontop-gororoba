@@ -92,6 +92,11 @@ ncurses, gettext when translations are enabled, and libxcb when XCB support is
 enabled. The JSON schema gate under `make check` uses Python 3 from the standard
 library only; `PYTHON` selects that interpreter.
 
+The CLI and generated-man parity gate requires AsciiDoc 10.2.1 or newer, a
+DocBook XML 4.5 catalog, `xmllint`, and `xsltproc`. AsciiDoc 10.2.0 emits Python
+`SyntaxWarning` diagnostics on current interpreters before rendering the same
+source, so the gate rejects that version instead of masking its diagnostics.
+
 ```sh
 make
 make check

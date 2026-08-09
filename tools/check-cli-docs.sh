@@ -44,6 +44,34 @@ compare_sets() {
 	fi
 }
 
+a2x_version_supported() {
+	candidate_version=$1
+
+	printf '%s\n' "$candidate_version" | awk -F. '
+	NF == 3 &&
+	$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ {
+		if ($1 > 10 ||
+		    ($1 == 10 && ($2 > 2 || ($2 == 2 && $3 >= 1))))
+			exit 0
+	}
+	{ exit 1 }
+	'
+}
+
+require_a2x_version() {
+	command -v a2x >/dev/null 2>&1 || {
+		echo "a2x is unavailable" >&2
+		return 1
+	}
+
+	detected_version=$(a2x --version 2>/dev/null |
+		awk '$1 == "a2x" { print $2; exit }')
+	if ! a2x_version_supported "$detected_version"; then
+		echo "a2x $detected_version is unsupported; version 10.2.1 or newer is required" >&2
+		return 1
+	fi
+}
+
 verify_cli_docs() {
 	binary=$1
 	source_file=$2
@@ -261,9 +289,23 @@ verify_cli_docs() {
 
 cd "$repo_root"
 
+require_a2x_version
 verify_cli_docs ./radeontop radeontop.c radeontop.asc radeontop.1
 
 if [ "${1:-}" = "--self-test" ]; then
+	for supported_version in 10.2.1 10.3.0 11.0.0; do
+		a2x_version_supported "$supported_version" || {
+			echo "version gate rejected supported a2x $supported_version" >&2
+			exit 1
+		}
+	done
+	for unsupported_version in 10.2.0 9.9.9 unknown; do
+		if a2x_version_supported "$unsupported_version"; then
+			echo "version gate accepted unsupported a2x $unsupported_version" >&2
+			exit 1
+		fi
+	done
+
 	bad_man_source=$scratch/missing-dither-seed.asc
 	sed '/^\*--dither-seed /d' radeontop.asc > "$bad_man_source"
 
@@ -282,7 +324,7 @@ if [ "${1:-}" = "--self-test" ]; then
 		exit 1
 	fi
 	printf '%s\n' \
-		"CLI documentation verifier: known-good accepted, two known-bad inputs rejected"
+		"CLI documentation verifier: supported renderer accepted; unsupported renderer and two document mutations rejected"
 elif [ "$#" -ne 0 ]; then
 	echo "usage: $0 [--self-test]" >&2
 	exit 2

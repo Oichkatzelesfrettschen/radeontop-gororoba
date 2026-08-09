@@ -162,8 +162,19 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            asciidoc pkgconf gettext libpciaccess-dev libdrm-dev \
+            asciidoc docbook-xml python3-venv \
+            pkgconf gettext libpciaccess-dev libdrm-dev \
             libncurses-dev libxcb1-dev libxcb-dri2-0-dev
+
+      # AsciiDoc 10.2.0 evaluates one table separator as a non-raw Python
+      # string and emits SyntaxWarning diagnostics on current Python.  The
+      # 10.2.1 renderer uses a raw string and keeps the zero-diagnostic contract.
+      - name: Pin the diagnostic-clean man renderer
+        run: |
+          python3 -m venv "$RUNNER_TEMP/asciidoc"
+          "$RUNNER_TEMP/asciidoc/bin/pip" install \
+            --disable-pip-version-check --no-deps asciidoc==10.2.1
+          echo "$RUNNER_TEMP/asciidoc/bin" >> "$GITHUB_PATH"
 
       - name: Build
         run: make plain=1 VERSION=0.0.rci.gffffffffffff
