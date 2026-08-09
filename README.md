@@ -103,6 +103,7 @@ make check
 make check-build-identity
 make check-cli-docs
 make check-dist
+make check-test-dependencies
 make install PREFIX=/usr DESTDIR=/path/to/staging
 ```
 

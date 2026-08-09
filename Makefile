@@ -128,8 +128,8 @@ LIBS += $(shell pkg-config --libs ncursesw 2>/dev/null || \
 		shell pkg-config --libs ncurses 2>/dev/null || \
 		echo "-lncurses")
 
-.PHONY: all check check-build-identity check-cli-docs check-dist clean install man dist \
-	source-intelligence FORCE
+.PHONY: all check check-build-identity check-cli-docs check-dist \
+	check-test-dependencies clean install man dist source-intelligence FORCE
 
 all: $(bin)
 
@@ -163,6 +163,7 @@ check: $(tests)
 	./tests/rs480_observation_test
 	./tools/check-build-identity.sh --self-test
 	./tools/check-dist.sh --self-test
+	./tools/check-test-dependencies.sh --self-test
 
 check-build-identity:
 	./tools/check-build-identity.sh --self-test
@@ -173,6 +174,9 @@ check-cli-docs: $(bin)
 check-dist:
 	./tools/check-dist.sh --self-test
 
+check-test-dependencies:
+	./tools/check-test-dependencies.sh --self-test
+
 tests/collector_test: tests/collector_test.c collector.c include/collector.h
 	$(CC) $(TEST_CFLAGS) $(CPPFLAGS) -Iinclude -pthread \
 		-o $@ tests/collector_test.c collector.c $(TEST_LDFLAGS) -lm
@@ -182,7 +186,7 @@ tests/device_model_test: tests/device_model_test.c device_model.c \
 	$(CC) $(TEST_CFLAGS) $(CPPFLAGS) -Iinclude \
 		-o $@ tests/device_model_test.c device_model.c $(TEST_LDFLAGS)
 
-tests/detect_path_test: tests/detect_path_test.c device_model.c \
+tests/detect_path_test: tests/detect_path_test.c detect.c device_model.c \
 		rs480_observation.c include/device_model.h include/radeontop.h \
 		include/rs480_observation.h $(verh)
 	$(CC) $(TEST_CFLAGS) $(CPPFLAGS) -Iinclude \

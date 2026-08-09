@@ -27,7 +27,11 @@ supportable.
 
 The Makefile enumerates production translation units. A new root-level C file
 does not enter the binary until the `src` list names it. The unit binaries link
-only the production modules their contract exercises.
+only the production modules their contract exercises. A test that textually
+includes a production C file names that file as a prerequisite without adding
+it to the linker command. `tools/check-test-dependencies.sh` derives every such
+include and verifies the corresponding Make rule, so an implementation edit
+cannot leave a stale harness binary.
 
 ## Startup and shutdown flow
 
