@@ -2,18 +2,25 @@
 <component type="console-application">
  <id>com.clbr.radeontop</id>
  <name>radeontop</name>
- <summary>Graphic card usage viewer for AMD Radeon series.</summary>
+ <summary>Graphics processor usage viewer for AMD Radeon devices</summary>
  <description>
-	<p>View AMD Radeon graphic card utilization, both for the total activity percent and individual blocks</p>
+	<p>View total activity and individual hardware-block utilization for AMD Radeon graphics processors.</p>
  </description>
+	<developer id="com.clbr">
+	 <name>radeontop contributors</name>
+	</developer>
  <categories>
 	<category>System</category>
  </categories>
  <provides>
-	 <binary>radeontop -c</binary>
+	 <binary>radeontop</binary>
  </provides>
- <url type="homepage">https://github.com/clbr/radeontop</url>
- <url type="bugtracker">https://github.com/clbr/radeontop/issues</url> 
- <metadata_license>CC0-1.0</metadata_license>
- <project_license>GPL-3.0</project_license>
+	<url type="homepage">https://github.com/Oichkatzelesfrettschen/radeontop-gororoba</url>
+	<url type="bugtracker">https://github.com/Oichkatzelesfrettschen/radeontop-gororoba/issues</url>
+	<metadata_license>CC0-1.0</metadata_license>
+	<project_license>GPL-3.0-only</project_license>
+	<releases>
+	 <release version="1.4" date="2021-11-24"/>
+	</releases>
+	<content_rating type="oars-1.1"/>
 </component>

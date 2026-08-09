@@ -77,7 +77,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             pkgconf gettext libpciaccess-dev libdrm-dev \
             libncurses-dev libxcb1-dev libxcb-dri2-0-dev \
-            clang cppcheck shellcheck
+            appstream clang cppcheck shellcheck
 
       # -Wconditional-uninitialized reports a read that is defined on some paths
       # only.  It found the ticks.c uvd and vce reads that gcc at -Os did not.
@@ -97,15 +97,18 @@ jobs:
             -Iinclude ./*.c
 
       - name: shellcheck
-        run: shellcheck ./*.sh
+        run: shellcheck ./*.sh ./tools/*.sh
+
+      - name: AppStream metadata
+        run: appstreamcli validate --no-net --pedantic radeontop.metainfo.xml
 
       # Both family-enum tables must name every chipset the PCI ID headers
       # declare, and familycheck.sh exits nonzero when one does not.
       - name: family enum tables
-        run: ./familycheck.sh
+        run: ./familycheck.sh --self-test
 
-  collector:
-    name: collector integrity
+  unit:
+    name: unit integrity
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -113,12 +116,12 @@ jobs:
       - name: Install analysis dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends clang
+          sudo apt-get install -y --no-install-recommends \
+            clang pkgconf libpciaccess-dev libdrm-dev
 
-      # The collector test needs no GPU, no ncurses, no libdrm, and no
-      # libpciaccess: the backend and the clock are injected, so the arithmetic,
-      # the schedule, the failure semantics, and the shutdown path are all
-      # observable from a scripted fake and a virtual clock.
+      # The suites need no GPU or device access. They cover the capture format,
+      # collector arithmetic and scheduling, full explicit-path selection, MMIO
+      # admission and clock units, and the strict RS480 observation parser.
       - name: Unit tests, gcc
         run: make check
 
@@ -159,11 +162,14 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            pkgconf gettext libpciaccess-dev libdrm-dev \
+            asciidoc pkgconf gettext libpciaccess-dev libdrm-dev \
             libncurses-dev libxcb1-dev libxcb-dri2-0-dev
 
       - name: Build
         run: make plain=1 VERSION=0.0.rci.gffffffffffff
+
+      - name: Option and documentation parity
+        run: make check-cli-docs plain=1 VERSION=0.0.rci.gffffffffffff
 
       # Each case exercises an option boundary that a runner reaches without a
       # GPU, because option parsing precedes every device access.
@@ -179,6 +185,12 @@ jobs:
             test ! -s /tmp/err || fail "$opt wrote to stderr"
           done
 
+          for seed in 1 4294967295; do
+            ./radeontop --dither-seed "$seed" --help > /tmp/out 2> /tmp/err || \
+              fail "valid dither seed $seed was rejected"
+            test ! -s /tmp/err || fail "valid dither seed $seed wrote to stderr"
+          done
+
           # An unknown option exits nonzero with its diagnostic on stderr.
           if ./radeontop --no-such-option > /tmp/out 2> /tmp/err; then
             fail "unknown option exited 0"
@@ -186,8 +198,24 @@ jobs:
           test ! -s /tmp/out || fail "unknown option wrote to stdout"
           grep -q 'no-such-option' /tmp/err || fail "unknown option unnamed"
 
+          for arg_order in before after; do
+            if test "$arg_order" = before; then
+              set -- unexpected-operand --help
+            else
+              set -- --help unexpected-operand
+            fi
+            if ./radeontop "$@" > /tmp/out 2> /tmp/err; then
+              fail "$arg_order-option operand was accepted"
+            fi
+            grep -q "Unexpected operand 'unexpected-operand'" /tmp/err || \
+              fail "$arg_order-option operand was not identified"
+          done
+
           # A rejected argument exits nonzero and names the accepted range.
-          for arg in "-t 0" "-t -1" "-t abc" "-i 0" "-b zz" "-b 100" "-b -1"; do
+          for arg in "-t 0" "-t -1" "-t abc" "-t 1000001" \
+            "-i 0" "-i 86401" "-b zz" "-b 100" "-b -1" \
+            "--dither-seed 0" "--dither-seed abc" \
+            "--dither-seed 4294967296"; do
             # shellcheck disable=SC2086
             if ./radeontop $arg -l 1 -d - > /tmp/out 2> /tmp/err; then
               fail "'$arg' was accepted"

@@ -17,11 +17,12 @@
 #ifndef COLLECTOR_H
 #define COLLECTOR_H
 
-// This header names libc and pthread only, so collector.c builds and tests
+// collector.h names libc and pthread only, so collector.c builds and tests
 // without ncurses, libdrm, libpciaccess, or a GPU.  The register masks, the
 // device reads, and the clock all arrive through the injectable structures
-// below, which is what lets a synthetic backend and a virtual clock exercise
-// the accumulator and the schedule deterministically.
+// in struct collector_backend and struct collector_clock.  Those interfaces
+// let a synthetic backend and a virtual clock exercise the accumulator and
+// schedule deterministically.
 
 #include <pthread.h>
 #include <stdbool.h>
@@ -99,7 +100,7 @@ struct collector_backend {
 };
 
 // wait_until returns when the deadline passes or when wake() interrupts it, and
-// the caller re-tests its stop predicate either way.  Production binds this to
+// the caller re-tests its stop predicate either way.  Production binds wake to
 // a CLOCK_MONOTONIC condition variable; a test binds it to a virtual clock that
 // advances without waiting.
 struct collector_clock {
@@ -136,11 +137,26 @@ struct collector_config {
 	uint64_t dither_seed;
 };
 
+// Draws one unbiased value in [0, bound) from the collector's deterministic
+// splitmix64 stream.  Rejection removes the modulo bias that appears whenever
+// bound does not divide the 64-bit generator range exactly.
+bool collector_dither_uniform_below(uint64_t *state, uint64_t bound,
+		uint64_t *value);
+
 // Each measurement class counts its own reads, because a status read and a
 // clock read succeed and fail independently.
 struct collector_signal_stats {
 	uint64_t valid;
 	uint64_t failed;
+};
+
+struct collector_lane_bounds {
+	uint64_t busy;
+	uint64_t valid;
+	uint64_t nominal;
+	double conditional_fraction;
+	double unconditional_lower;
+	double unconditional_upper;
 };
 
 // One published generation is one completed measurement window.  Every field is
@@ -154,7 +170,8 @@ struct collector_snapshot {
 	struct timespec published;              // monotonic, actual
 	struct timespec published_realtime;     // wall clock, read at publication
 	// Wall clock at the scheduled end, derived by subtracting the publication
-	// lag from the near-simultaneous monotonic/realtime pair above.  Reading
+	// lag from published and published_realtime, a near-simultaneous pair.
+	// Reading
 	// CLOCK_REALTIME at publication and calling it the scheduled end dates the
 	// window by however long the endpoint reads took.  The monotonic fields
 	// remain authoritative for cadence, because realtime steps.
@@ -203,6 +220,7 @@ struct collector {
 	pthread_mutex_t mutex;
 	pthread_cond_t changed;
 	pthread_t thread;
+	int (*join_thread)(pthread_t thread, void **result);
 
 	struct collector_snapshot snapshot;
 
@@ -225,7 +243,9 @@ enum collector_wait_result {
 	COLLECTOR_WAIT_SNAPSHOT = 0, // out holds a generation newer than requested
 	COLLECTOR_WAIT_TIMEOUT = 1,  // the deadline passed with no new generation
 	COLLECTOR_WAIT_FINISHED = 2, // the worker exited and publishes no more
-	COLLECTOR_WAIT_FATAL = 3     // the worker lost the backend; out holds why
+	COLLECTOR_WAIT_FATAL = 3,    // the worker lost the backend; out holds why
+	COLLECTOR_WAIT_ERROR = 4,    // the consumer wait primitive failed
+	COLLECTOR_WAIT_GAP = 5       // an exact consumer lost one or more windows
 };
 
 // abs_timeout is a CLOCK_MONOTONIC deadline, or NULL to wait indefinitely.  A
@@ -235,13 +255,19 @@ int collector_wait_next(struct collector *collector, uint64_t after_generation,
 		const struct timespec *abs_timeout,
 		struct collector_snapshot *out);
 
+// Dump capture requires every generation.  This variant reports a gap instead
+// of silently returning the newest replaceable snapshot.
+int collector_wait_next_contiguous(struct collector *collector,
+		uint64_t after_generation, const struct timespec *abs_timeout,
+		struct collector_snapshot *out);
+
 // Copies the current snapshot without waiting.  Returns false before the first
 // generation publishes.
 bool collector_peek(struct collector *collector, struct collector_snapshot *out);
 
 void collector_request_stop(struct collector *collector);
 int collector_join(struct collector *collector);
-void collector_destroy(struct collector *collector);
+int collector_destroy(struct collector *collector);
 
 // A lane's duty over the reads that actually validated it.  Returns NaN when
 // the window holds no valid read of that lane's source register, so a caller
@@ -249,8 +275,14 @@ void collector_destroy(struct collector *collector);
 double collector_lane_fraction(const struct collector_snapshot *snapshot,
 		enum collector_lane lane);
 
+// The unconditional interval assigns every missing slot idle at its lower end
+// and busy at its upper end.  This remains valid when read loss correlates with
+// load, while the conditional fraction describes only the successful reads.
+bool collector_lane_missing_data_bounds(const struct collector_snapshot *snapshot,
+		enum collector_lane lane, struct collector_lane_bounds *bounds);
+
 // Valid status reads over nominal slots.  Read failures can correlate with
-// load, so this travels with every status-derived figure.
+// load, so coverage travels with every status-derived figure.
 double collector_status_coverage(const struct collector_snapshot *snapshot);
 
 // Monotonic nanoseconds between two timestamps, for age and lateness.

@@ -27,7 +27,7 @@
 #define DUMP_POLL_MS 200
 
 // Renders a lane duty, or N/A when the window validated no read of the register
-// the lane comes from.  A 0.00% there would read as a confirmed-idle block.
+// the lane comes from.  A 0.00% value would read as a confirmed-idle block.
 static const char *format_percent(char *buffer, size_t size, double fraction) {
 	if (isnan(fraction))
 		snprintf(buffer, size, "N/A");
@@ -42,7 +42,7 @@ static void lane_field(FILE *f, const struct engine_masks *masks,
 		enum collector_lane lane, const char *name, const char *separator) {
 	char buffer[16];
 
-	// A zero mask means the block is absent on this family, or its exposure
+	// A zero mask means the block is absent on the selected family, or its exposure
 	// on the target remains unconfirmed and the lane stays unexposed until
 	// an observation supports it.
 	if (!masks->lane[lane])
@@ -81,13 +81,14 @@ static void endpoint_health(FILE *f, const char *name, uint32_t capability,
 		fprintf(f, ", %s %s", name, valid ? "ok" : "failed");
 }
 
-static void dump_line(FILE *f, const struct engine_masks *masks,
+static int dump_line(FILE *f, const struct engine_masks *masks,
+		const struct radeontop_capture_metadata *metadata,
 		const struct collector_snapshot *snapshot, unsigned char bus) {
 	char buffer[16];
 
 	// The timestamp labels the window's scheduled end, which the collector
-	// derives from the publication lag.  Stamping it here would date the
-	// measurement by however long this writer was blocked.
+	// derives from the publication lag.  A dump-time stamp would date the
+	// measurement by however long the dump writer was blocked.
 	fprintf(f, "%llu.%06llu: ",
 		(unsigned long long) snapshot->scheduled_end_realtime.tv_sec,
 		(unsigned long long) (snapshot->scheduled_end_realtime.tv_nsec / 1000));
@@ -171,10 +172,15 @@ static void dump_line(FILE *f, const struct engine_masks *masks,
 	endpoint_health(f, "vramread", COLLECTOR_CAP_VRAM, snapshot, snapshot->vram_valid);
 	endpoint_health(f, "gttread", COLLECTOR_CAP_GTT, snapshot, snapshot->gtt_valid);
 
-	fprintf(f, "\n");
+	if (radeontop_capture_write_snapshot_evidence(f, metadata->run_id,
+			masks, snapshot))
+		return -1;
+
+	return fputc('\n', f) == EOF ? -1 : 0;
 }
 
 int dumpdata(struct collector *collector, const struct engine_masks *masks,
+		const struct radeontop_capture_metadata *metadata,
 		const char file[], const unsigned int limit, const unsigned char bus) {
 
 #ifdef ENABLE_NLS
@@ -191,13 +197,29 @@ int dumpdata(struct collector *collector, const struct engine_masks *masks,
 
 	// Check the file can be output to
 	FILE *f = NULL;
-	if (file[0] == '-')
+	if (radeontop_capture_path_is_stdout(file))
 		f = stdout;
 	else
 		f = fopen(file, "a");
 
 	if (!f)
 		die(_("Can't open file for writing."));
+	// Descriptor type controls locking.  stdout can name a regular append
+	// redirection, and two `-d -` processes must not interleave on that file.
+	if (radeontop_capture_lock_stream(f)) {
+		fprintf(stderr, _("Another capture owns the output file.\n"));
+		if (f != stdout)
+			fclose(f);
+		return 1;
+	}
+
+	if (radeontop_capture_write_header(f, metadata)) {
+		fprintf(stderr, _("Failed writing the capture provenance header.\n"));
+		radeontop_capture_unlock_stream(f);
+		if (f != stdout)
+			fclose(f);
+		return 1;
+	}
 
 	if (rs480_gart_observed.valid) {
 		fprintf(f,
@@ -211,6 +233,9 @@ int dumpdata(struct collector *collector, const struct engine_masks *masks,
 	uint64_t last_generation = 0;
 	unsigned int printed = 0;
 	int status = 0;
+	const char *end_reason = "signal";
+	struct collector_snapshot terminal_snapshot;
+	bool terminal_snapshot_valid = false;
 
 	while (!terminate_requested) {
 		struct collector_snapshot snapshot;
@@ -219,6 +244,7 @@ int dumpdata(struct collector *collector, const struct engine_masks *masks,
 		// A bounded wait is what lets the signal flag be observed; the
 		// handler itself may only set a volatile sig_atomic_t.
 		if (clock_gettime(CLOCK_MONOTONIC, &deadline)) {
+			end_reason = "clock-error";
 			status = 1;
 			break;
 		}
@@ -228,7 +254,7 @@ int dumpdata(struct collector *collector, const struct engine_masks *masks,
 			deadline.tv_sec++;
 		}
 
-		const int wait = collector_wait_next(collector, last_generation,
+		const int wait = collector_wait_next_contiguous(collector, last_generation,
 			&deadline, &snapshot);
 
 		if (wait == COLLECTOR_WAIT_TIMEOUT)
@@ -236,36 +262,69 @@ int dumpdata(struct collector *collector, const struct engine_masks *masks,
 
 		if (wait == COLLECTOR_WAIT_FATAL) {
 			fprintf(stderr, _("The collector lost the device, stopping.\n"));
+			end_reason = "collector-fatal";
+			terminal_snapshot = snapshot;
+			terminal_snapshot_valid = true;
 			status = 1;
 			break;
 		}
 
-		if (wait == COLLECTOR_WAIT_FINISHED)
+		if (wait == COLLECTOR_WAIT_FINISHED) {
+			end_reason = "collector-finished";
+			terminal_snapshot = snapshot;
+			terminal_snapshot_valid = true;
 			break;
+		}
+		if (wait == COLLECTOR_WAIT_ERROR) {
+			fprintf(stderr, _("The collector wait failed, stopping.\n"));
+			end_reason = "wait-error";
+			status = 1;
+			break;
+		}
+		if (wait == COLLECTOR_WAIT_GAP) {
+			fprintf(stderr,
+				_("The capture lost a completed measurement window, stopping.\n"));
+			end_reason = "generation-gap";
+			terminal_snapshot = snapshot;
+			terminal_snapshot_valid = true;
+			status = 1;
+			break;
+		}
 
 		last_generation = snapshot.generation;
-		dump_line(f, masks, &snapshot, bus);
+		if (dump_line(f, masks, metadata, &snapshot, bus)) {
+			fprintf(stderr, _("Failed writing the dump output.\n"));
+			end_reason = "write-error";
+			status = 1;
+			break;
+		}
 
 		// A disk-full or broken-pipe condition makes the capture
 		// incomplete, and a research capture that lost lines is not a
 		// successful run.
 		if (fflush(f) || ferror(f)) {
 			fprintf(stderr, _("Failed writing the dump output.\n"));
+			end_reason = "write-error";
 			status = 1;
 			break;
 		}
 
 		printed++;
-		if (limit && printed >= limit)
+		if (limit && printed >= limit) {
+			end_reason = "line-limit";
 			break;
+		}
 	}
 
-	if (fflush(f) || ferror(f))
+	if (!ferror(f) && radeontop_capture_write_run_end(f, metadata->run_id,
+			end_reason, status, last_generation, printed,
+			terminal_snapshot_valid ? &terminal_snapshot : NULL))
 		status = 1;
-
+	if (radeontop_capture_sync_stream(f))
+		status = 1;
+	if (radeontop_capture_unlock_stream(f))
+		status = 1;
 	if (f != stdout) {
-		if (fsync(fileno(f)))
-			status = 1;
 		if (fclose(f))
 			status = 1;
 	}

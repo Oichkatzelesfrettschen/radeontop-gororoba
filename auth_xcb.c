@@ -19,6 +19,8 @@
 #include <xcb/xcb.h>
 #include <xcb/dri2.h>
 
+void authenticate_drm_xcb(drm_magic_t magic);
+
 /* Try to authenticate the DRM client with help from the X server. */
 void authenticate_drm_xcb(drm_magic_t magic) {
 	xcb_connection_t *conn = xcb_connect(NULL, NULL);

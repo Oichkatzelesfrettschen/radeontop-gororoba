@@ -80,8 +80,8 @@ struct fake_clock;
 static void fake_clock_consume(struct fake_clock *clock, int64_t ns);
 static int fake_now(void *context, struct timespec *ts);
 
-// Enough entries for the dithered windows below, which run at eight slots per
-// second.  A read past the end is dropped rather than counted, so an overrun
+// Dithered test windows run at eight slots per second.  A read past the
+// capacity is dropped rather than counted, so an overrun
 // shows up as a short sequence instead of a corrupted one.
 #define SAMPLE_TIME_CAP 32
 
@@ -155,8 +155,8 @@ static void note_call(struct fake_backend *fake) {
 	if (fake->torn_down)
 		fake->read_after_teardown = true;
 
-	// The clock mutex is taken under the backend mutex here and nowhere in the
-	// reverse order, so the nesting introduces no cycle.
+	// note_call takes the clock mutex under the backend mutex.  No path acquires
+	// the same pair in reverse order, so the nesting introduces no cycle.
 	if (fake->clock && fake->record_times &&
 			fake->sample_time_count < SAMPLE_TIME_CAP)
 		fake_now(fake->clock, &fake->sample_times[fake->sample_time_count++]);
@@ -311,6 +311,8 @@ struct fake_clock {
 	const int64_t *extra_delay_ns;
 	size_t extra_delay_len;
 	uint64_t waits;
+	uint64_t now_calls;
+	uint64_t fail_now_call;
 };
 
 static void fake_clock_init(struct fake_clock *clock) {
@@ -343,12 +345,17 @@ static void fake_clock_consume(struct fake_clock *clock, int64_t ns) {
 
 static int fake_now(void *context, struct timespec *ts) {
 	struct fake_clock *clock = context;
+	int result = 0;
 
 	pthread_mutex_lock(&clock->mutex);
-	*ts = clock->now;
+	clock->now_calls++;
+	if (clock->fail_now_call == clock->now_calls)
+		result = -1;
+	else
+		*ts = clock->now;
 	pthread_mutex_unlock(&clock->mutex);
 
-	return 0;
+	return result;
 }
 
 static int fake_wait_until(void *context, const struct timespec *deadline) {
@@ -460,8 +467,8 @@ static void harness_start(struct harness *harness, uint32_t ticks,
 	harness_start_seeded(harness, ticks, dumpinterval, capabilities, 0);
 }
 
-// Stops and joins.  Marking the backend torn down here is what makes a read
-// that outlived the join observable: production unmaps the BAR at this point.
+// Stops and joins.  Marking the backend torn down after the join makes a late
+// read observable: production unmaps the BAR at the same lifecycle boundary.
 static void harness_join(struct harness *harness) {
 	collector_request_stop(&harness->collector);
 	CHECK(collector_join(&harness->collector) == 0);
@@ -558,6 +565,60 @@ static int64_t sample_offset_in_slot(const struct timespec *sample, size_t slot,
 	return at - (int64_t) slot * period;
 }
 
+// A bound that consumes just over half the uint64_t range makes the rejected
+// prefix large enough for a deterministic control.  Seed 3 rejects the first
+// splitmix64 word and accepts the second; a bare modulo returns a different
+// value and leaves the state with one fewer draw.
+static void case_dither_rejects_modulo_bias(void) {
+	uint64_t state = UINT64_C(3);
+	uint64_t value = 0;
+
+	current_case = "dither_rejects_modulo_bias";
+	CHECK(collector_dither_uniform_below(&state,
+		UINT64_C(9223372036854775809), &value));
+	CHECK_U64(state, UINT64_C(4354685564936845357));
+	CHECK_U64(value, UINT64_C(3694763184872335752));
+	CHECK(!collector_dither_uniform_below(NULL, 3, &value));
+	CHECK(!collector_dither_uniform_below(&state, 0, &value));
+	CHECK(!collector_dither_uniform_below(&state, 3, NULL));
+}
+
+// A three-slot second contains two 333333333 ns slots and one 333333334 ns
+// slot.  Every seeded sample remains inside its exact rational-grid slot,
+// including the carried final nanosecond before the one-second boundary.
+static void case_dither_uses_exact_fractional_slot_width(void) {
+	static const uint32_t values[] = { GUI_BIT };
+	struct harness harness;
+	struct collector_snapshot snapshot;
+
+	current_case = "dither_uses_exact_fractional_slot_width";
+	harness_init(&harness);
+	harness.masks.lane[COLLECTOR_LANE_GUI] = GUI_BIT;
+	harness.backend.status_values = values;
+	harness.backend.status_values_len = 1;
+	harness.backend.clock = &harness.clock;
+	harness.backend.record_times = true;
+
+	harness_start_seeded(&harness, 3, 1, COLLECTOR_CAP_STATUS, 0x5eed);
+	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_SNAPSHOT);
+	CHECK_U64(snapshot.attempted_slots, 3);
+	CHECK(harness.backend.sample_time_count >= 3);
+
+	for (size_t slot = 0; slot < 3; slot++) {
+		const int64_t sample_ns =
+			(int64_t) harness.backend.sample_times[slot].tv_sec * NS_PER_SEC +
+			harness.backend.sample_times[slot].tv_nsec;
+		const int64_t slot_start = (int64_t) slot * NS_PER_SEC / 3;
+		const int64_t slot_end = (int64_t) (slot + 1) * NS_PER_SEC / 3;
+
+		CHECK(sample_ns >= slot_start);
+		CHECK(sample_ns < slot_end);
+	}
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
 // Every dithered sample stays inside the slot it belongs to, and the offsets
 // vary rather than settling on one phase.  Membership follows the grid, so a
 // dithered window still carries the slot count an exact one carries.
@@ -595,8 +656,8 @@ static void case_dither_keeps_samples_in_their_slots(void) {
 			distinct++;
 	}
 
-	// A generator that returned a constant would satisfy the bound above while
-	// leaving the phase fixed, which is the property the dither exists for.
+	// Bounds alone admit a constant generator.  Distinct offsets assert the
+	// phase movement that dithering provides.
 	CHECK(distinct >= 6);
 
 	// The window boundary is a grid fact, so the dither leaves it alone.
@@ -869,7 +930,7 @@ static void case_zero_valid_status(void) {
 	harness_start(&harness, 8, 1, COLLECTOR_CAP_STATUS);
 	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_SNAPSHOT);
 
-	// A window with no valid read renders N/A.  Returning 0.0 here would be
+	// A window with no valid read renders N/A.  Returning 0.0 would be
 	// indistinguishable from a confirmed-idle GPU.
 	CHECK_U64(snapshot.status.valid, 0);
 	CHECK_U64(snapshot.status.failed, 8);
@@ -1043,6 +1104,72 @@ static void case_generations_monotonic(void) {
 
 		last = snapshot.generation;
 	}
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+static int injected_join_failure(pthread_t thread, void **result) {
+	(void) thread;
+	(void) result;
+	return EDEADLK;
+}
+
+static void case_join_failure_preserves_lifecycle_owners(void) {
+	struct fake_backend backend;
+	struct fake_clock clock;
+	struct collector collector;
+	struct engine_masks masks;
+	const struct collector_config config = { 1, 1, 0 };
+	struct collector_backend backend_ops;
+	struct collector_clock clock_ops;
+
+	current_case = "join_failure_preserves_lifecycle_owners";
+	fake_backend_init(&backend);
+	fake_clock_init(&clock);
+	memset(&masks, 0, sizeof(masks));
+	backend_ops = fake_backend_ops(&backend, 0);
+	clock_ops = fake_clock_ops(&clock);
+
+	CHECK(collector_init(&collector, &config, &backend_ops, &masks,
+		&clock_ops) == 0);
+	collector.join_thread = injected_join_failure;
+	collector.thread_started = true;
+	CHECK(collector_join(&collector) != 0);
+	CHECK(collector.thread_started);
+	CHECK(collector_destroy(&collector) != 0);
+	CHECK(collector.initialized);
+
+	collector.thread_started = false;
+	CHECK(collector_destroy(&collector) == 0);
+	fake_clock_destroy(&clock);
+	fake_backend_destroy(&backend);
+}
+
+static void case_contiguous_wait_detects_lost_window(void) {
+	struct harness harness;
+	struct collector_snapshot snapshot;
+
+	current_case = "contiguous_wait_detects_lost_window";
+	harness_init(&harness);
+	harness.masks.lane[COLLECTOR_LANE_GUI] = GUI_BIT;
+	harness_start(&harness, 2, 1, COLLECTOR_CAP_STATUS);
+
+	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_SNAPSHOT);
+	CHECK_U64(snapshot.generation, 1);
+	CHECK(next_snapshot(&harness, 1, &snapshot) == COLLECTOR_WAIT_SNAPSHOT);
+	CHECK_U64(snapshot.generation, 2);
+	CHECK(next_snapshot(&harness, 2, &snapshot) == COLLECTOR_WAIT_SNAPSHOT);
+	CHECK_U64(snapshot.generation, 3);
+
+	CHECK(collector_wait_next_contiguous(&harness.collector, 0, NULL,
+		&snapshot) == COLLECTOR_WAIT_GAP);
+	CHECK_U64(snapshot.generation, 3);
+	CHECK(collector_wait_next_contiguous(&harness.collector, 2, NULL,
+		&snapshot) == COLLECTOR_WAIT_SNAPSHOT);
+	CHECK_U64(snapshot.generation, 3);
+	CHECK(collector_wait_next_contiguous(&harness.collector, UINT64_MAX,
+		NULL, &snapshot) == COLLECTOR_WAIT_GAP);
 
 	harness_stop(&harness);
 	harness_destroy(&harness);
@@ -1275,8 +1402,76 @@ static void case_rejects_impossible_configuration(void) {
 		config.ticks = 1000000;
 		config.dumpinterval = 86400;
 		CHECK(collector_init(&collector, &config, &ops, &masks, &clock_ops) != 0);
+
+		// More than one slot per nanosecond cannot produce distinct deadlines.
+		config.ticks = 1000000001U;
+		config.dumpinterval = 1;
+		CHECK(collector_init(&collector, &config, &ops, &masks, &clock_ops) != 0);
 	}
 
+	fake_clock_destroy(&clock);
+	fake_backend_destroy(&backend);
+}
+
+static void case_rejects_double_start(void) {
+	struct harness harness;
+
+	current_case = "rejects_double_start";
+	harness_init(&harness);
+	harness_start(&harness, 10, 1, COLLECTOR_CAP_STATUS);
+	CHECK(collector_start(&harness.collector) != 0);
+	harness_join(&harness);
+	CHECK(collector_start(&harness.collector) != 0);
+	collector_destroy(&harness.collector);
+	harness_destroy(&harness);
+}
+
+static void case_publication_clock_failure_is_fatal(void) {
+	struct harness harness;
+	struct collector_snapshot snapshot;
+
+	current_case = "publication_clock_failure_is_fatal";
+	harness_init(&harness);
+	harness.masks.lane[COLLECTOR_LANE_GUI] = GUI_BIT;
+
+	// One-slot publication reaches the injected clock in execution order: worker
+	// start, pre-sample, read start, read end, post-sample, publication.
+	harness.clock.fail_now_call = 6;
+	harness_start(&harness, 1, 1, COLLECTOR_CAP_STATUS);
+	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_FATAL);
+	CHECK(snapshot.fatal);
+	CHECK_U64(snapshot.generation, 1);
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+static void case_consumer_wait_error_is_reported(void) {
+	struct fake_backend backend;
+	struct fake_clock clock;
+	struct collector collector;
+	struct engine_masks masks;
+	struct collector_snapshot snapshot;
+	struct timespec invalid_deadline = { 0, NS_PER_SEC };
+	const struct collector_config config = { 10, 1, 0 };
+
+	current_case = "consumer_wait_error_is_reported";
+	fake_backend_init(&backend);
+	fake_clock_init(&clock);
+	memset(&masks, 0, sizeof(masks));
+
+	{
+		const struct collector_backend ops =
+			fake_backend_ops(&backend, COLLECTOR_CAP_STATUS);
+		const struct collector_clock clock_ops = fake_clock_ops(&clock);
+
+		CHECK(collector_init(&collector, &config, &ops, &masks,
+			&clock_ops) == 0);
+	}
+
+	CHECK(collector_wait_next(&collector, 0, &invalid_deadline,
+		&snapshot) == COLLECTOR_WAIT_ERROR);
+	collector_destroy(&collector);
 	fake_clock_destroy(&clock);
 	fake_backend_destroy(&backend);
 }
@@ -1300,9 +1495,9 @@ static void case_sample_belongs_to_its_own_window(void) {
 	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_SNAPSHOT);
 
 	// The window holds only the sample taken at its own start.  The sample
-	// taken after the stall measures a device state this window never saw, so
-	// it belongs to the window containing its timestamp; counting it here
-	// would report a real measurement against the wrong second.
+	// taken after the stall measures a device state absent from the window, so
+	// it belongs to the window containing its timestamp; counting it in the
+	// first window would report a real measurement against the wrong second.
 	CHECK_U64(snapshot.generation, 1);
 	CHECK_U64(snapshot.attempted_slots, 1);
 	CHECK_U64(snapshot.missed_slots, 9);
@@ -1629,6 +1824,62 @@ static void case_rejects_incomplete_interfaces(void) {
 	fake_backend_destroy(&backend);
 }
 
+static void case_missing_data_bounds(void) {
+	struct collector_snapshot snapshot;
+	struct collector_lane_bounds bounds;
+
+	current_case = "missing_data_bounds";
+	memset(&snapshot, 0, sizeof(snapshot));
+	snapshot.nominal_slots = 10;
+	snapshot.status.valid = 8;
+	snapshot.lane_busy[COLLECTOR_LANE_GUI] = 3;
+
+	CHECK(collector_lane_missing_data_bounds(&snapshot,
+		COLLECTOR_LANE_GUI, &bounds));
+	CHECK_U64(bounds.busy, 3);
+	CHECK_U64(bounds.valid, 8);
+	CHECK_U64(bounds.nominal, 10);
+	CHECK_CLOSE(bounds.conditional_fraction, 3.0 / 8.0);
+	CHECK_CLOSE(bounds.unconditional_lower, 3.0 / 10.0);
+	CHECK_CLOSE(bounds.unconditional_upper, 5.0 / 10.0);
+
+	snapshot.status.valid = 0;
+	snapshot.lane_busy[COLLECTOR_LANE_GUI] = 0;
+	CHECK(collector_lane_missing_data_bounds(&snapshot,
+		COLLECTOR_LANE_GUI, &bounds));
+	CHECK(isnan(bounds.conditional_fraction));
+	CHECK_CLOSE(bounds.unconditional_lower, 0.0);
+	CHECK_CLOSE(bounds.unconditional_upper, 1.0);
+
+	snapshot.uvd.valid = 5;
+	snapshot.lane_busy[COLLECTOR_LANE_UVD] = 4;
+	CHECK(collector_lane_missing_data_bounds(&snapshot,
+		COLLECTOR_LANE_UVD, &bounds));
+	CHECK_U64(bounds.valid, 5);
+	CHECK_CLOSE(bounds.unconditional_lower, 0.4);
+	CHECK_CLOSE(bounds.unconditional_upper, 0.9);
+
+	snapshot.status.valid = 11;
+	CHECK(!collector_lane_missing_data_bounds(&snapshot,
+		COLLECTOR_LANE_GUI, &bounds));
+	snapshot.status.valid = 2;
+	snapshot.lane_busy[COLLECTOR_LANE_GUI] = 3;
+	CHECK(!collector_lane_missing_data_bounds(&snapshot,
+		COLLECTOR_LANE_GUI, &bounds));
+	CHECK(!collector_lane_missing_data_bounds(&snapshot,
+		(enum collector_lane) -1, &bounds));
+	CHECK(!collector_lane_missing_data_bounds(&snapshot,
+		COLLECTOR_LANE_COUNT, &bounds));
+	CHECK(!collector_lane_missing_data_bounds(NULL,
+		COLLECTOR_LANE_GUI, &bounds));
+	CHECK(!collector_lane_missing_data_bounds(&snapshot,
+		COLLECTOR_LANE_GUI, NULL));
+
+	snapshot.nominal_slots = 0;
+	CHECK(!collector_lane_missing_data_bounds(&snapshot,
+		COLLECTOR_LANE_GUI, &bounds));
+}
+
 int main(void) {
 	case_alternating_status();
 	case_failed_status_between_valid();
@@ -1653,13 +1904,21 @@ int main(void) {
 	case_scheduled_end_tracks_publication_lag();
 	case_late_publication_keeps_scheduled_end();
 	case_rejects_incomplete_interfaces();
+	case_missing_data_bounds();
 	case_generations_monotonic();
+	case_join_failure_preserves_lifecycle_owners();
+	case_contiguous_wait_detects_lost_window();
 	case_old_copy_survives();
 	case_fatal_before_first_generation();
 	case_stop_while_waiting();
 	case_multiple_readers();
 	case_long_interval_prompt_shutdown();
 	case_rejects_impossible_configuration();
+	case_rejects_double_start();
+	case_publication_clock_failure_is_fatal();
+	case_consumer_wait_error_is_reported();
+	case_dither_rejects_modulo_bias();
+	case_dither_uses_exact_fractional_slot_width();
 	case_dither_keeps_samples_in_their_slots();
 	case_unseeded_schedule_stays_exact();
 	case_dither_seed_reproduces_offsets();

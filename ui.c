@@ -17,7 +17,6 @@
 #include "radeontop.h"
 
 #include <math.h>
-#include <math.h>
 #include <ncurses.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -29,8 +28,8 @@ static void printcenter(const unsigned int y, const unsigned int width,
 	va_list ap;
 	va_start(ap, fmt);
 
-	// vasprintf leaves ptr indeterminate when it fails, and mbstowcs, mvprintw
-	// and free below all take it, so a failed allocation drops the line here.
+	// vasprintf leaves ptr indeterminate when it fails.  The failed-allocation
+	// branch drops the line before mbstowcs, mvprintw, or free receives ptr.
 #ifdef ENABLE_NLS
 	if (vasprintf(&ptr, fmt, ap) < 0) {
 		va_end(ap);
@@ -62,8 +61,8 @@ static void printright(const unsigned int y, const unsigned int width,
 	va_list ap;
 	va_start(ap, fmt);
 
-	// vasprintf leaves ptr indeterminate when it fails, and mbstowcs, mvprintw
-	// and free below all take it, so a failed allocation drops the line here.
+	// vasprintf leaves ptr indeterminate when it fails.  The failed-allocation
+	// branch drops the line before mbstowcs, mvprintw, or free receives ptr.
 #ifdef ENABLE_NLS
 	if (vasprintf(&ptr, fmt, ap) < 0) {
 		va_end(ap);
@@ -148,12 +147,20 @@ int present(struct collector *collector, const struct engine_masks *masks,
 			fprintf(stderr, _("The collector lost the device, stopping.\n"));
 			return 1;
 		}
+		if (wait == COLLECTOR_WAIT_ERROR) {
+			fprintf(stderr, _("The collector wait failed, stopping.\n"));
+			return 1;
+		}
 
 		if (wait == COLLECTOR_WAIT_FINISHED || terminate_requested)
 			return 0;
 	}
 
-	newterm(NULL, stderr, stdin);
+	SCREEN *screen = newterm(NULL, stderr, stdin);
+	if (!screen) {
+		fprintf(stderr, _("Failed to initialize the terminal interface.\n"));
+		return 1;
+	}
 	noecho();
 	halfdelay(10);
 	curs_set(0);
@@ -201,12 +208,16 @@ int present(struct collector *collector, const struct engine_masks *masks,
 
 		// One published generation is one completed measurement window.
 		// The snapshot is copied whole under the collector's mutex, so
-		// every figure below comes from one window rather than from a
+		// every displayed figure comes from one window rather than from a
 		// structure the collector is still writing.
 		collector_peek(collector, &snapshot);
 
 		struct timespec drawn_at;
-		clock_gettime(CLOCK_MONOTONIC, &drawn_at);
+		if (clock_gettime(CLOCK_MONOTONIC, &drawn_at)) {
+			fprintf(stderr, _("Failed to read the display clock.\n"));
+			status = 1;
+			break;
+		}
 
 		const double age_s =
 			collector_timespec_delta_ns(&snapshot.published, &drawn_at) / 1e9;
@@ -292,7 +303,7 @@ int present(struct collector *collector, const struct engine_masks *masks,
 		// Enough height?
 		if (h > bigh) start++;
 
-		// A zero mask means the block is absent on this family, or its
+		// A zero mask means the block is absent on the selected family, or its
 		// exposure on the target remains unconfirmed and the lane stays
 		// unexposed until an observation supports it, so the row is
 		// dropped rather than rendered as a perpetual 0.00%.
@@ -451,6 +462,7 @@ int present(struct collector *collector, const struct engine_masks *masks,
 	}
 
 	endwin();
+	delscreen(screen);
 
 	return status;
 }

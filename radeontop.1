@@ -1,13 +1,13 @@
 '\" t
 .\"     Title: radeontop
-.\"    Author: [FIXME: author] [see http://docbook.sf.net/el/author]
-.\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 09/30/2019
-.\"    Manual: \ \&
-.\"    Source: \ \&
+.\"    Author: Lauri Kasanen
+.\" Generator: DocBook XSL Stylesheets vsnapshot <http://docbook.sf.net/>
+.\"      Date: 2026-08-09
+.\"    Manual: RadeonTop Manual
+.\"    Source: RadeonTop 1.4
 .\"  Language: English
 .\"
-.TH "RADEONTOP" "1" "09/30/2019" "\ \&" "\ \&"
+.TH "RADEONTOP" "1" "2026\-08\-09" "RadeonTop 1\&.4" "RadeonTop Manual"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -28,84 +28,94 @@
 .\" * MAIN CONTENT STARTS HERE *
 .\" -----------------------------------------------------------------
 .SH "NAME"
-radeontop \- tool to show GPU utilization
+radeontop \- report Radeon GPU utilization
 .SH "SYNOPSIS"
 .sp
-\fBradeontop [\-chmv] [\-b \fR\fB\fIbus\fR\fR\fB] [\-d \fR\fB\fIfile\fR\fR\fB] [\-l \fR\fB\fIlimit\fR\fR\fB] [\-i \fR\fB\fIsecs\fR\fR\fB] [\-p \fR\fB\fIdevice\fR\fR\fB] [\-t \fR\fB\fIticks\fR\fR\fB]\fR
+\fBradeontop [\-cThmv] [\-\-dither\-seed \fR\fB\fIseed\fR\fR\fB] [\-b \fR\fB\fIbus\fR\fR\fB] [\-d \fR\fB\fIfile\fR\fR\fB] [\-i \fR\fB\fIseconds\fR\fR\fB] [\-l \fR\fB\fIlimit\fR\fR\fB] [\-p \fR\fB\fIdevice\fR\fR\fB] [\-t \fR\fB\fIticks\fR\fR\fB]\fR
 .SH "DESCRIPTION"
 .sp
-RadeonTop shows the utilization of your GPU, both in general and by blocks\&.
+RadeonTop samples Radeon engine\-status registers and reports total GPU activity plus the hardware blocks whose status bits have an exposed gauge\&.
 .sp
-Supported cards are R600 and up, plus R300\-class IGPs (RS400/RS480/RS482/RS485) via the mem path (\-m), which read engine\-busy from RBBM_STATUS\&. Dump mode on RS480\-class systems also emits a one\-line # header with AGP_BASE_2, GART_FEATURE_ID, and GART_BASE when the steinmarder radeon_rs480_candidate_gart_mc_regs debugfs surface is present and readable\&.
+R600 and later use GRBM_STATUS through a radeon or amdgpu DRM interface when available\&. R300\-class integrated graphics (RS400, RS480, RS482, and RS485) use RBBM_STATUS through PCI resource2; detection selects the direct path when the radeon read\-register ioctl rejects the pre\-R600 register\&.
+.sp
+Every dump invocation emits one radeontop_capture_v1 JSON header\&. It carries one clean source commit, the exact source and build manifests plus their digests, boot and device identity, and the byte\-escaped command vector\&. Dump mode rejects dirty and unknown source identities because they lack an immutable source object\&. Each data line retains its human\-readable fields and ends with an evidence_v1 JSON object containing the run identity, timing, slot accounting, capability and signal state, clock means, lane denominators, and unconditional missing\-data bounds\&. A radeontop_run_end_v1 footer records the logical exit reason and final collector state\&.
 .SH "OPTIONS"
 .PP
 \fB\-b, \-\-bus \fR\fB\fIbus\fR\fR
 .RS 4
-If you have multiple cards, use this parameter to select a specific one\&. For lspci output
-\fI01:00\&.0 VGA compatible controller\fR, bus would be
-\fI1\fR\&.
+Select one hexadecimal PCI bus number from 00 through ff\&. For the lspci address
+01:00\&.0, the bus argument is
+1\&.
 .RE
 .PP
 \fB\-c, \-\-color\fR
 .RS 4
-Enables colorized output\&.
+Enable colorized output\&.
 .RE
 .PP
 \fB\-d, \-\-dump \fR\fB\fIfile\fR\fR
 .RS 4
-Instead of displaying the data, dump it to
-\fIfile\fR\&. Use
-\fI\-\fR
-for stdout\&. The file is appended to, so it\(cqs safe to specify the same filename for consecutive runs\&.
-
-Use
-\fISIGTERM\fR
-or
-\fISIGINT\fR
-for graceful termination\&.
+Append dump records to
+\fIfile\fR\&. An argument equal to
+\-
+writes stdout; other names, including names beginning with
+\-, name regular files\&. Each invocation appends a new provenance header\&. A regular destination, including redirected stdout, carries an exclusive lock for the whole run\&.
+SIGTERM
+and
+SIGINT
+request an orderly footer, flush, and shutdown\&.
+.RE
+.PP
+\fB\-\-dither\-seed \fR\fB\fIseed\fR\fR
+.RS 4
+Offset each sample reproducibly inside its own exact slot using a nonzero seed from 1 through 4294967295\&. Rejection sampling gives every nanosecond in the slot equal probability\&. Omitting the option keeps samples on the exact deadline grid\&. Dithering breaks fixed workload\-phase lock, while scheduler lateness can reduce accepted coverage near the end of a slot\&.
 .RE
 .PP
 \fB\-h, \-\-help\fR
 .RS 4
-Displays help\&.
+Display help on stdout and exit successfully\&.
 .RE
 .PP
 \fB\-i, \-\-dump\-interval \fR\fB\fIseconds\fR\fR
 .RS 4
-Wait for N seconds between data output\&.
+Publish one dump window every
+\fIseconds\fR\&. The accepted range is 1 through 86400 and the default is 1\&.
 .RE
 .PP
 \fB\-l, \-\-limit \fR\fB\fIlimit\fR\fR
 .RS 4
-Quit after dumping
+Stop after
 \fIlimit\fR
-lines\&. Only valid in dump mode\&. Default is to dump until terminated; use
-\fISIGTERM\fR
-or
-\fISIGINT\fR
-for graceful termination\&.
+data lines in dump mode\&. Zero, the default, runs until termination\&.
 .RE
 .PP
 \fB\-m, \-\-mem\fR
 .RS 4
-Forces the use of the PCI sysfs resourceN MMIO path, in case autodetection fails\&. Useful for the proprietary driver\&.
+Force the direct PCI sysfs
+resourceN
+MMIO path selected by the known device family\&. An unknown PCI ID has no admitted direct layout\&. With \-\-path, this option forces MMIO for the same selected PCI device\&.
 .RE
 .PP
 \fB\-p, \-\-path \fR\fB\fIdevice\fR\fR
 .RS 4
-Open the DRM device node specified by
-\fIdevice\fR
-path\&. Usually it is located at /dev/dri/card0 or /dev/drm0\&. If this option used, \-\-bus and \-\-mem are ignored\&.
+Open the named DRM device node and derive its exact PCI identity\&. The path selects the device instead of \-\-bus; \-\-mem can still force the validated direct status path for that same device\&.
 .RE
 .PP
 \fB\-t, \-\-ticks \fR\fB\fIticks\fR\fR
 .RS 4
-How many times per second to sample the data\&. The default is 120\&. Higher numbers mean more accurate output and more overhead\&.
+Request
+\fIticks\fR
+samples per second from 1 through 1000000\&. The default rate is 120\&. A higher rate increases temporal resolution and overhead; scheduler lateness and register\-read cost can reduce the valid sample count\&.
+.RE
+.PP
+\fB\-T, \-\-transparency\fR
+.RS 4
+Enable terminal transparency\&.
 .RE
 .PP
 \fB\-v, \-\-version\fR
 .RS 4
-Displays the program version\&.
+Display the source version and exit successfully\&.
 .RE
 .SH "INTERACTIVE COMMANDS"
 .PP
@@ -120,4 +130,12 @@ Quit\&.
 .RE
 .SH "RESOURCES"
 .sp
-See http://github\&.com/clbr/radeontop
+Fork source and evidence documentation: https://github\&.com/Oichkatzelesfrettschen/radeontop\-gororoba
+.sp
+Upstream source: https://github\&.com/clbr/radeontop
+.SH "AUTHOR"
+.PP
+\fBLauri Kasanen\fR
+.RS 4
+Author.
+.RE

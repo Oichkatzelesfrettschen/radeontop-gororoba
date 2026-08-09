@@ -85,15 +85,25 @@ static int monotonic_now(void *context, struct timespec *ts) {
 // that arrives while nobody waits must still short-circuit the next wait.
 static int monotonic_wait_until(void *context, const struct timespec *deadline) {
 	struct collector_monotonic_clock *clock = context;
+	int result = 0;
 
-	pthread_mutex_lock(&clock->mutex);
+	if (pthread_mutex_lock(&clock->mutex))
+		return -1;
 	while (!clock->woken) {
-		if (pthread_cond_timedwait(&clock->cond, &clock->mutex, deadline) == ETIMEDOUT)
-			break;
-	}
-	pthread_mutex_unlock(&clock->mutex);
+		const int wait_result =
+			pthread_cond_timedwait(&clock->cond, &clock->mutex, deadline);
 
-	return 0;
+		if (wait_result == ETIMEDOUT)
+			break;
+		if (wait_result) {
+			result = -1;
+			break;
+		}
+	}
+	if (pthread_mutex_unlock(&clock->mutex))
+		result = -1;
+
+	return result;
 }
 
 static void monotonic_wake(void *context) {
@@ -333,21 +343,23 @@ static int publish(struct collector *collector,
 		}
 	}
 
+	if (collector->clock.now(collector->clock.context, &snapshot.published) ||
+		clock_gettime(CLOCK_REALTIME, &snapshot.published_realtime)) {
+		endpoint_result = COLLECTOR_READ_FATAL;
+	} else {
+		// The published monotonic/realtime pair is near-simultaneous, so the
+		// publication lag on the monotonic clock converts the realtime stamp to the
+		// scheduled end.  Dating the window by publication time instead would
+		// move the label by however long the endpoint reads took.
+		snapshot.scheduled_end_realtime = snapshot.published_realtime;
+		timespec_add_ns(&snapshot.scheduled_end_realtime,
+			-collector_timespec_delta_ns(window_end, &snapshot.published));
+	}
+
 	if (endpoint_result == COLLECTOR_READ_FATAL) {
 		snapshot.fatal = true;
 		snapshot.fatal_read_result = COLLECTOR_READ_FATAL;
 	}
-
-	collector->clock.now(collector->clock.context, &snapshot.published);
-	clock_gettime(CLOCK_REALTIME, &snapshot.published_realtime);
-
-	// The pair above is near-simultaneous, so the publication lag measured on
-	// the monotonic clock converts the realtime stamp back to the scheduled
-	// end.  Dating the window by publication time instead would move the label
-	// by however long the endpoint reads took.
-	snapshot.scheduled_end_realtime = snapshot.published_realtime;
-	timespec_add_ns(&snapshot.scheduled_end_realtime,
-		-collector_timespec_delta_ns(window_end, &snapshot.published));
 
 	pthread_mutex_lock(&collector->mutex);
 	snapshot.generation = collector->snapshot.generation + 1;
@@ -395,6 +407,25 @@ static uint64_t dither_next(uint64_t *state) {
 	return z ^ (z >> 31);
 }
 
+bool collector_dither_uniform_below(uint64_t *state, uint64_t bound,
+		uint64_t *value) {
+	uint64_t candidate;
+	uint64_t threshold;
+
+	if (!state || !bound || !value)
+		return false;
+
+	// The rejected prefix has 2^64 modulo bound elements.  The remaining
+	// generator range contains an integral number of copies of every residue.
+	threshold = (UINT64_C(0) - bound) % bound;
+	do {
+		candidate = dither_next(state);
+	} while (candidate < threshold);
+
+	*value = candidate % bound;
+	return true;
+}
+
 // The slot grid for the window in progress.  Slot `slot` is the next one due,
 // `base` is its exact grid point, and `deadline` is where inside the slot the
 // sample is taken.  The grid advances by 1e9/ticks nanoseconds carrying the
@@ -404,9 +435,10 @@ static uint64_t dither_next(uint64_t *state) {
 // `nominal_slots` coincides exactly with `window_end` and the grid never
 // diverges from the window boundary.
 //
-// The dither offset lies in [0, period), so `base <= deadline < next base` and
-// the deadlines stay strictly increasing.  Slot membership follows `base`
-// alone, which is what keeps a dithered run comparable with an exact one.
+// The dither offset lies in [0, exact slot width), so
+// `base <= deadline < next base` and the deadlines stay strictly increasing.
+// Slot membership follows `base` alone, which is what keeps a dithered run
+// comparable with an exact one.
 struct collector_schedule {
 	struct timespec window_start;
 	struct timespec window_end;
@@ -416,20 +448,30 @@ struct collector_schedule {
 	uint64_t slot;
 
 	uint64_t dither_state;
-	int64_t dither_bound; // 0 places every sample on its grid point
+	bool dither_enabled;
 };
 
-// Places the sample point for the slot `base` now names.
-static void schedule_arm(struct collector_schedule *schedule) {
+// Places the sample point for the slot identified by `base`.
+static bool schedule_arm(struct collector_schedule *schedule, uint32_t ticks,
+		int64_t period_quotient, int64_t period_remainder) {
 	schedule->deadline = schedule->base;
 
-	if (schedule->dither_bound > 0)
-		timespec_add_ns(&schedule->deadline,
-			(int64_t) (dither_next(&schedule->dither_state) %
-				(uint64_t) schedule->dither_bound));
+	if (schedule->dither_enabled) {
+		uint64_t offset;
+		uint64_t slot_width = (uint64_t) period_quotient;
+
+		if (schedule->remainder + period_remainder >= (int64_t) ticks)
+			slot_width++;
+		if (!collector_dither_uniform_below(&schedule->dither_state,
+				slot_width, &offset))
+			return false;
+		timespec_add_ns(&schedule->deadline, (int64_t) offset);
+	}
+
+	return true;
 }
 
-static void schedule_step(struct collector_schedule *schedule, uint32_t ticks,
+static bool schedule_step(struct collector_schedule *schedule, uint32_t ticks,
 		int64_t period_quotient, int64_t period_remainder) {
 	schedule->remainder += period_remainder;
 	timespec_add_ns(&schedule->base, period_quotient);
@@ -440,7 +482,7 @@ static void schedule_step(struct collector_schedule *schedule, uint32_t ticks,
 	}
 
 	schedule->slot++;
-	schedule_arm(schedule);
+	return schedule_arm(schedule, ticks, period_quotient, period_remainder);
 }
 
 // The grid point one slot later, without mutating the grid, so the caller can
@@ -507,8 +549,9 @@ static void *collector_worker(void *argument) {
 
 	schedule.base = schedule.window_start;
 	schedule.dither_state = collector->config.dither_seed;
-	schedule.dither_bound = collector->config.dither_seed ? period_quotient : 0;
-	schedule_arm(&schedule);
+	schedule.dither_enabled = collector->config.dither_seed != 0;
+	if (!schedule_arm(&schedule, ticks, period_quotient, period_remainder))
+		goto fatal;
 
 	schedule.window_end = schedule.window_start;
 	timespec_add_ns(&schedule.window_end,
@@ -536,10 +579,10 @@ static void *collector_worker(void *argument) {
 		}
 
 		// Give up every slot the wake-up already overran, and publish each
-		// window whose boundary it crossed, before reading.  A sample taken
-		// now measures the device now, so attributing it to a window that
-		// ended before the read began would place a real measurement in the
-		// wrong window.  Those windows publish with no attempt of their own.
+		// window whose boundary it crossed before reading.  The post-read
+		// timestamp prevents a measurement from entering a window that ended
+		// before the read began.  Those windows publish with no attempt of
+		// their own.
 		for (;;) {
 			const struct timespec next = schedule_next_base(&schedule,
 				ticks, period_quotient, period_remainder);
@@ -548,7 +591,9 @@ static void *collector_worker(void *argument) {
 				break;
 
 			accumulator.missed_slots++;
-			schedule_step(&schedule, ticks, period_quotient, period_remainder);
+			if (!schedule_step(&schedule, ticks, period_quotient,
+					period_remainder))
+				goto fatal;
 
 			if (schedule_complete_window(collector, &accumulator, &schedule,
 					nominal_slots) == COLLECTOR_READ_FATAL)
@@ -569,14 +614,16 @@ static void *collector_worker(void *argument) {
 		if (collector->clock.now(collector->clock.context, &after))
 			goto fatal;
 
-		schedule_step(&schedule, ticks, period_quotient, period_remainder);
+		if (!schedule_step(&schedule, ticks, period_quotient,
+				period_remainder))
+			goto fatal;
 
 		if (schedule_complete_window(collector, &accumulator, &schedule,
 				nominal_slots) == COLLECTOR_READ_FATAL)
 			goto fatal;
 
 		// A read that outlasted its own period leaves later deadlines already
-		// behind.  Giving them up here is what returns the worker to the grid
+		// behind.  Discarding the overrun deadlines returns the worker to the grid
 		// instead of letting wait_until fall through and start another read
 		// immediately for as long as the device stays slow.  The test reads the
 		// sample point rather than the grid point: a slot whose sample point is
@@ -584,7 +631,9 @@ static void *collector_worker(void *argument) {
 		// miss the device did not cause.
 		while (timespec_reached(&schedule.deadline, &after)) {
 			accumulator.missed_slots++;
-			schedule_step(&schedule, ticks, period_quotient, period_remainder);
+			if (!schedule_step(&schedule, ticks, period_quotient,
+					period_remainder))
+				goto fatal;
 
 			if (schedule_complete_window(collector, &accumulator, &schedule,
 					nominal_slots) == COLLECTOR_READ_FATAL)
@@ -612,17 +661,19 @@ int collector_init(struct collector *collector,
 
 	if (!config->ticks || !config->dumpinterval)
 		return -1;
+	if (config->ticks > NS_PER_SEC)
+		return -2;
 
 	// The slot count per window is the loop bound and the coverage
 	// denominator, so a product that exceeds what the schedule can carry is
-	// rejected here rather than wrapping later.
+	// rejected by collector_init rather than wrapping later.
 	if ((uint64_t) config->ticks * config->dumpinterval > UINT32_MAX)
-		return -2;
+		return -3;
 
 	// The worker calls both on every wake-up, so a null one faults on the
 	// first iteration rather than at construction.
 	if (!clock->now || !clock->wait_until)
-		return -3;
+		return -4;
 
 	// A capability asserts that its register is readable, which makes the
 	// callback that reads it part of the assertion.
@@ -633,27 +684,28 @@ int collector_init(struct collector *collector,
 		((backend->capabilities & COLLECTOR_CAP_MCLK) && !backend->read_mclk) ||
 		((backend->capabilities & COLLECTOR_CAP_VRAM) && !backend->read_vram) ||
 		((backend->capabilities & COLLECTOR_CAP_GTT) && !backend->read_gtt))
-		return -4;
+		return -5;
 
 	memset(collector, 0, sizeof(*collector));
 	collector->config = *config;
 	collector->backend = *backend;
 	collector->masks = *masks;
 	collector->clock = *clock;
+	collector->join_thread = pthread_join;
 
 	if (pthread_mutex_init(&collector->mutex, NULL))
-		return -5;
+		return -6;
 
 	if (pthread_condattr_init(&attr)) {
 		pthread_mutex_destroy(&collector->mutex);
-		return -6;
+		return -7;
 	}
 
 	if (pthread_condattr_setclock(&attr, CLOCK_MONOTONIC) ||
 		pthread_cond_init(&collector->changed, &attr)) {
 		pthread_condattr_destroy(&attr);
 		pthread_mutex_destroy(&collector->mutex);
-		return -7;
+		return -8;
 	}
 
 	pthread_condattr_destroy(&attr);
@@ -664,9 +716,12 @@ int collector_init(struct collector *collector,
 int collector_start(struct collector *collector) {
 	if (!collector->initialized)
 		return -1;
+	if (collector->thread_started || collector->finished ||
+		collector->stop_requested)
+		return -2;
 
 	if (pthread_create(&collector->thread, NULL, collector_worker, collector))
-		return -2;
+		return -3;
 
 	collector->thread_started = true;
 	return 0;
@@ -701,17 +756,42 @@ int collector_wait_next(struct collector *collector, uint64_t after_generation,
 		}
 
 		if (abs_timeout) {
-			if (pthread_cond_timedwait(&collector->changed, &collector->mutex,
-					abs_timeout) == ETIMEDOUT) {
+			const int wait_result = pthread_cond_timedwait(&collector->changed,
+				&collector->mutex, abs_timeout);
+
+			if (wait_result == ETIMEDOUT) {
 				result = COLLECTOR_WAIT_TIMEOUT;
 				break;
 			}
+			if (wait_result) {
+				result = COLLECTOR_WAIT_ERROR;
+				break;
+			}
 		} else {
-			pthread_cond_wait(&collector->changed, &collector->mutex);
+			if (pthread_cond_wait(&collector->changed, &collector->mutex)) {
+				result = COLLECTOR_WAIT_ERROR;
+				break;
+			}
 		}
 	}
 
 	pthread_mutex_unlock(&collector->mutex);
+	return result;
+}
+
+int collector_wait_next_contiguous(struct collector *collector,
+		uint64_t after_generation, const struct timespec *abs_timeout,
+		struct collector_snapshot *out) {
+	if (after_generation == UINT64_MAX)
+		return COLLECTOR_WAIT_GAP;
+
+	const int result = collector_wait_next(collector, after_generation,
+		abs_timeout, out);
+
+	if (result == COLLECTOR_WAIT_SNAPSHOT &&
+		out->generation != after_generation + 1)
+		return COLLECTOR_WAIT_GAP;
+
 	return result;
 }
 
@@ -743,20 +823,30 @@ int collector_join(struct collector *collector) {
 	if (!collector->thread_started)
 		return 0;
 
-	if (pthread_join(collector->thread, NULL))
+	if (!collector->join_thread || collector->join_thread(collector->thread, NULL))
 		return -1;
 
 	collector->thread_started = false;
 	return 0;
 }
 
-void collector_destroy(struct collector *collector) {
+int collector_destroy(struct collector *collector) {
 	if (!collector->initialized)
-		return;
+		return 0;
+	if (collector->thread_started)
+		return -1;
 
-	pthread_cond_destroy(&collector->changed);
-	pthread_mutex_destroy(&collector->mutex);
+	if (pthread_cond_destroy(&collector->changed))
+		return -2;
+	if (pthread_mutex_destroy(&collector->mutex)) {
+		// The condition variable is already gone, so retrying destruction would
+		// operate on a destroyed object.  The caller receives the failure while
+		// the lifecycle state records that the collector cannot be reused.
+		collector->initialized = false;
+		return -2;
+	}
 	collector->initialized = false;
+	return 0;
 }
 
 double collector_lane_fraction(const struct collector_snapshot *snapshot,
@@ -776,6 +866,40 @@ double collector_lane_fraction(const struct collector_snapshot *snapshot,
 		return NAN;
 
 	return (double) snapshot->lane_busy[lane] / (double) valid;
+}
+
+bool collector_lane_missing_data_bounds(const struct collector_snapshot *snapshot,
+		enum collector_lane lane, struct collector_lane_bounds *bounds) {
+	uint64_t valid;
+	uint64_t busy;
+
+	if (!snapshot || !bounds || lane < 0 || lane >= COLLECTOR_LANE_COUNT ||
+		!snapshot->nominal_slots)
+		return false;
+
+	if (lane == COLLECTOR_LANE_UVD)
+		valid = snapshot->uvd.valid;
+	else if (lane == COLLECTOR_LANE_VCE0)
+		valid = snapshot->vce.valid;
+	else
+		valid = snapshot->status.valid;
+
+	busy = snapshot->lane_busy[lane];
+	if (valid > snapshot->nominal_slots || busy > valid)
+		return false;
+
+	bounds->busy = busy;
+	bounds->valid = valid;
+	bounds->nominal = snapshot->nominal_slots;
+	bounds->conditional_fraction = valid ?
+		(double) busy / (double) valid : NAN;
+	bounds->unconditional_lower =
+		(double) busy / (double) snapshot->nominal_slots;
+	bounds->unconditional_upper =
+		(double) (busy + snapshot->nominal_slots - valid) /
+		(double) snapshot->nominal_slots;
+
+	return true;
 }
 
 double collector_status_coverage(const struct collector_snapshot *snapshot) {

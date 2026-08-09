@@ -12,8 +12,14 @@
 
 PREFIX ?= /usr
 INSTALL ?= install
+PYTHON ?= python3
 LIBDIR ?= lib
 MANDIR ?= share/man
+DATADIR ?= share/radeontop
+APPDATADIR ?= share/metainfo
+# xgettext otherwise injects the wall clock into a tracked source artifact.
+# This date identifies the template revision and changes with its messages.
+POT_CREATION_DATE ?= 2026-08-09 00:00+0000
 
 nls ?= 1
 xcb ?= 1
@@ -22,6 +28,10 @@ xcb ?= 1
 # packaging recipe passes the revision it pinned; an empty value leaves
 # getver.sh to query the surrounding checkout for a developer build.
 VERSION ?=
+# A source export has no Git metadata.  Its packager supplies both fields so
+# the capture header retains the immutable source object and tree state.
+SOURCE_COMMIT ?=
+SOURCE_STATE ?=
 
 bin = radeontop
 xcblib = libradeontop_xcb.so
@@ -29,9 +39,11 @@ xcblib = libradeontop_xcb.so
 # file left in the root, so the build surface follows the directory contents
 # rather than the recipe.  amdgpu.c joins below under its own option, and
 # auth_xcb.c builds into the separate xcb shim.
-src = auth.c collector.c collector_backend.c detect.c dump.c family_str.c radeon.c \
-      radeontop.c ui.c
+src = auth.c capture.c collector.c collector_backend.c detect.c device_model.c dump.c \
+	      family_str.c privileges.c radeon.c radeontop.c rs480_observation.c ui.c
 verh = include/version.h
+source_manifest = include/radeontop-source-manifest.txt
+build_manifest = include/radeontop-build-manifest.txt
 
 CFLAGS_SECTIONED = -ffunction-sections -fdata-sections
 LDFLAGS_SECTIONED = -Wl,-gc-sections
@@ -97,12 +109,20 @@ ifeq ($(xcb), 1)
 	LIBS += -ldl
 endif
 
+# These files determine the production binary or its dynamically loaded XCB
+# helper.  getver.sh hashes their names and contents into the capture identity;
+# generated include/version.h stays out to avoid a circular digest.
+identity_inputs = Makefile getver.sh $(src) \
+	$(if $(filter 1,$(xcb)),auth_xcb.c) \
+	$(filter-out $(verh),$(wildcard include/*.h))
+
 # On some distros, you might have to change this to ncursesw
 LIBS += $(shell pkg-config --libs ncursesw 2>/dev/null || \
 		shell pkg-config --libs ncurses 2>/dev/null || \
 		echo "-lncurses")
 
-.PHONY: all check clean install man dist FORCE
+.PHONY: all check check-build-identity check-cli-docs clean install man dist \
+	source-intelligence FORCE
 
 all: $(bin)
 
@@ -118,35 +138,98 @@ $(obj): $(wildcard include/*.h) $(verh)
 $(bin): $(obj)
 	$(CC) -o $(bin) $(obj) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $(LIBS)
 
-# The collector test links against libc and pthread only, so it builds without
-# ncurses, libdrm, and libpciaccess and runs without a GPU.  Its flags are
-# separate from CFLAGS so a sanitizer lane can rebuild it without disturbing the
-# production build.
-tests = tests/collector_test
+# The unit binaries link only the production modules their contracts exercise,
+# so they build without ncurses, libdrm, libpciaccess, or a GPU.  Their flags
+# stay separate from CFLAGS so a sanitizer lane can rebuild them without
+# disturbing the production build.
+tests = tests/capture_test tests/collector_test tests/detect_path_test \
+	tests/device_model_test tests/privileges_test tests/rs480_observation_test
 TEST_CFLAGS ?= -std=gnu11 -O1 -g -Wall -Wextra -Werror
 
 check: $(tests)
+	./tests/capture_test
+	$(PYTHON) ./tests/capture_json_test.py ./tests/capture_test
 	./tests/collector_test
+	./tests/detect_path_test
+	./tests/device_model_test
+	./tests/privileges_test
+	./tests/rs480_observation_test
+	./tools/check-build-identity.sh --self-test
+
+check-build-identity:
+	./tools/check-build-identity.sh --self-test
+
+check-cli-docs: $(bin)
+	./tools/check-cli-docs.sh --self-test
 
 tests/collector_test: tests/collector_test.c collector.c include/collector.h
 	$(CC) $(TEST_CFLAGS) $(CPPFLAGS) -Iinclude -pthread \
 		-o $@ tests/collector_test.c collector.c $(TEST_LDFLAGS) -lm
 
+tests/device_model_test: tests/device_model_test.c device_model.c \
+		include/device_model.h
+	$(CC) $(TEST_CFLAGS) $(CPPFLAGS) -Iinclude \
+		-o $@ tests/device_model_test.c device_model.c $(TEST_LDFLAGS)
+
+tests/detect_path_test: tests/detect_path_test.c device_model.c \
+		rs480_observation.c include/device_model.h include/radeontop.h \
+		include/rs480_observation.h $(verh)
+	$(CC) $(TEST_CFLAGS) $(CPPFLAGS) -Iinclude \
+		$(shell pkg-config --cflags libdrm pciaccess) \
+		-o $@ tests/detect_path_test.c device_model.c \
+		rs480_observation.c $(TEST_LDFLAGS)
+
+tests/privileges_test: tests/privileges_test.c privileges.c \
+		include/privileges.h
+	$(CC) $(TEST_CFLAGS) $(CPPFLAGS) -Iinclude \
+		-o $@ tests/privileges_test.c $(TEST_LDFLAGS)
+
+tests/capture_test: tests/capture_test.c capture.c collector.c device_model.c \
+		include/capture.h include/collector.h include/device_model.h
+	$(CC) $(TEST_CFLAGS) $(CPPFLAGS) -Iinclude -pthread \
+		-o $@ tests/capture_test.c capture.c collector.c device_model.c \
+		$(TEST_LDFLAGS) -lm
+
+tests/rs480_observation_test: tests/rs480_observation_test.c \
+		rs480_observation.c include/rs480_observation.h
+	$(CC) $(TEST_CFLAGS) $(CPPFLAGS) -Iinclude \
+		-o $@ tests/rs480_observation_test.c rs480_observation.c \
+		$(TEST_LDFLAGS)
+
 clean:
 	rm -f *.o $(bin) $(xcblib) $(tests)
 
-# FORCE runs getver.sh on every build so a changed VERSION reaches the header;
-# getver.sh replaces the header on a changed value only, so the objects that
-# include it rebuild on a version change and stay built otherwise.  A .git
-# prerequisite instead ties the stamp to a checkout the package build lacks.
-$(verh): FORCE
-	./getver.sh '$(VERSION)'
+source-intelligence:
+	@test -n "$(SOURCE_INTELLIGENCE_DIR)" || { \
+		echo "set SOURCE_INTELLIGENCE_DIR to an empty output directory" >&2; \
+		exit 2; \
+	}
+	./tools/radeontop-source-intelligence.sh "$(SOURCE_INTELLIGENCE_DIR)"
+
+# FORCE runs getver.sh on every build so source dirtiness and changed build
+# options reach the header.  The script replaces the header only when an
+# identity field changes, so the objects stay built otherwise.
+$(verh): export RADEONTOP_VERSION = $(VERSION)
+$(verh): export RADEONTOP_SOURCE_COMMIT = $(SOURCE_COMMIT)
+$(verh): export RADEONTOP_SOURCE_STATE = $(SOURCE_STATE)
+$(verh): export RADEONTOP_BUILD_CC = $(CC)
+$(verh): export RADEONTOP_BUILD_CC_VERSION = $(shell $(CC) --version 2>/dev/null | sed -n '1p')
+$(verh): export RADEONTOP_BUILD_CPPFLAGS = $(CPPFLAGS)
+$(verh): export RADEONTOP_BUILD_CFLAGS = $(CFLAGS)
+$(verh): export RADEONTOP_BUILD_LDFLAGS = $(LDFLAGS)
+$(verh): export RADEONTOP_BUILD_LIBS = $(LIBS) $(xcb_LIBS)
+$(verh): export RADEONTOP_BUILD_OPTIONS = nls=$(nls) xcb=$(xcb) amdgpu=$(amdgpu)
+$(verh): FORCE $(identity_inputs)
+	./getver.sh $(sort $(identity_inputs))
 
 FORCE:
 
 trans:
-	xgettext -o translations/radeontop.pot -k_ *.c \
-	--package-name radeontop
+	LC_ALL=C xgettext -o translations/radeontop.pot -k_ *.c \
+		--package-name radeontop
+	sed -i \
+		's/^"POT-Creation-Date:.*$$/"POT-Creation-Date: $(POT_CREATION_DATE)\\n"/' \
+		translations/radeontop.pot
 
 install: all
 	$(INSTALL) -D -m755 $(bin) $(DESTDIR)/$(PREFIX)/bin/$(bin)
@@ -154,12 +237,27 @@ ifeq ($(xcb), 1)
 	$(INSTALL) -D -m755 $(xcblib) $(DESTDIR)/$(PREFIX)/$(LIBDIR)/$(xcblib)
 endif
 	$(INSTALL) -D -m644 radeontop.1 $(DESTDIR)/$(PREFIX)/$(MANDIR)/man1/radeontop.1
+	$(INSTALL) -D -m644 $(source_manifest) \
+		$(DESTDIR)/$(PREFIX)/$(DATADIR)/source-manifest.txt
+	$(INSTALL) -D -m644 $(build_manifest) \
+		$(DESTDIR)/$(PREFIX)/$(DATADIR)/build-manifest.txt
+	$(INSTALL) -D -m644 radeontop.metainfo.xml \
+		$(DESTDIR)/$(PREFIX)/$(APPDATADIR)/com.clbr.radeontop.metainfo.xml
 ifeq ($(nls), 1)
 	$(MAKE) -C translations install PREFIX=$(PREFIX)
 endif
 
 man:
-	a2x -f manpage radeontop.asc
+	@diagnostics=$$(mktemp); \
+	trap 'rm -f "$$diagnostics"' 0 1 2 15; \
+	if ! a2x -f manpage radeontop.asc 2>"$$diagnostics"; then \
+		cat "$$diagnostics" >&2; \
+		exit 1; \
+	fi; \
+	if test -s "$$diagnostics"; then \
+		cat "$$diagnostics" >&2; \
+		exit 1; \
+	fi
 
 dist: ver = $(shell git describe)
 dist: name = $(bin)-$(ver)

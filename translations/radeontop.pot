@@ -1,6 +1,6 @@
 # SOME DESCRIPTIVE TITLE.
 # Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
-# This file is distributed under the same license as the PACKAGE package.
+# This file is distributed under the same license as the radeontop package.
 # FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
 #
 #, fuzzy
@@ -8,47 +8,56 @@ msgid ""
 msgstr ""
 "Project-Id-Version: radeontop\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2020-04-15 12:18+0300\n"
+"POT-Creation-Date: 2026-08-09 00:00+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=CHARSET\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: amdgpu.c:65 radeon.c:89
+#: amdgpu.c:93 radeon.c:131
 msgid "Failed to get GPU usage"
 msgstr ""
 
-#: amdgpu.c:78 radeon.c:100
+#: amdgpu.c:102
+msgid "Failed to get GPU clock limits"
+msgstr ""
+
+#: amdgpu.c:105
+msgid "GPU clock limits exceed the supported range"
+msgstr ""
+
+#: amdgpu.c:113 radeon.c:140
 msgid "Failed to get shader clock"
 msgstr ""
 
-#: amdgpu.c:84 radeon.c:105
+#: amdgpu.c:119 radeon.c:151
 msgid "Failed to get memory clock"
 msgstr ""
 
-#: amdgpu.c:86
+#: amdgpu.c:122
 #, c-format
 msgid ""
-"Clock frenquency reporting is disabled (amdgpu kernel driver 3.11.0 "
+"Clock frequency reporting is disabled (amdgpu kernel driver 3.11.0 "
 "required)\n"
 msgstr ""
 
-#: amdgpu.c:88
+#: amdgpu.c:124
 #, c-format
 msgid "Clock frequency reporting is not compiled in (libdrm 2.4.79 required)\n"
 msgstr ""
 
-#: amdgpu.c:95 radeon.c:118
+#: amdgpu.c:131 radeon.c:164
 msgid "Failed to get VRAM size"
 msgstr ""
 
-#: amdgpu.c:105 radeon.c:128
+#: amdgpu.c:141 radeon.c:174
 msgid "Failed to get VRAM usage"
 msgstr ""
 
-#: amdgpu.c:110 radeon.c:133
+#: amdgpu.c:146 radeon.c:179
 msgid "Failed to get GTT usage"
 msgstr ""
 
@@ -65,251 +74,464 @@ msgid ""
 "press ENTER to continue\n"
 msgstr ""
 
-#: detect.c:42
+#: detect.c:67
 msgid "Failed to init pciaccess"
 msgstr ""
 
-#: detect.c:84
+#: detect.c:85
+#, c-format
+msgid "Failed to probe PCI device %04x:%02x:%02x.%u: %s\n"
+msgstr ""
+
+#: detect.c:198
+msgid "Direct MMIO has no validated layout for the selected Radeon PCI ID"
+msgstr ""
+
+#: detect.c:200
 msgid "Can't get the register area size"
 msgstr ""
 
-#: detect.c:89
+#: detect.c:210
+msgid "Register BAR is smaller than the status window"
+msgstr ""
+
+#: detect.c:228
+msgid "Cannot elevate privileges for direct MMIO access"
+msgstr ""
+
+#: detect.c:231
 msgid "Cannot access GPU registers, are you root?"
 msgstr ""
 
-#: detect.c:93
+#: detect.c:236 detect.c:258
 msgid "mmap failed"
 msgstr ""
 
-#: detect.c:106
+#: detect.c:255
+msgid "Register BAR is smaller than the GRBM window"
+msgstr ""
+
+#: detect.c:263
+msgid "Failed to close the GPU register resource"
+msgstr ""
+
+#: detect.c:265
+msgid "Failed to drop effective privileges after direct MMIO setup"
+msgstr ""
+
+#: detect.c:296
 msgid "Failed to query driver version"
 msgstr ""
 
-#: detect.c:119
+#: detect.c:301
+#, c-format
+msgid "The DRM driver returned no name\n"
+msgstr ""
+
+#: detect.c:330
+#, c-format
+msgid "The DRM driver name is too long\n"
+msgstr ""
+
+#: detect.c:351
 #, c-format
 msgid "amdgpu support is not compiled in (libdrm 2.4.63 required)\n"
 msgstr ""
 
-#: detect.c:122
+#: detect.c:354
 #, c-format
 msgid "Unsupported driver %s\n"
 msgstr ""
 
-#: detect.c:147
+#: detect.c:394
+#, c-format
+msgid "The DRM device has no PCI bus identity\n"
+msgstr ""
+
+#: detect.c:398
+#, c-format
+msgid "The DRM device returned an invalid PCI bus identity\n"
+msgstr ""
+
+#: detect.c:406
+#, c-format
+msgid "Failed to init pciaccess: %s\n"
+msgstr ""
+
+#: detect.c:411
+#, c-format
+msgid "Failed to resolve the DRM device PCI identity\n"
+msgstr ""
+
+#: detect.c:436
 #, c-format
 msgid "Failed to open DRM node, no VRAM support.\n"
 msgstr ""
 
-#: detect.c:156
+#: detect.c:447
 #, c-format
 msgid "Failed to open %s: %s\n"
 msgstr ""
 
-#: detect.c:179
+#: detect.c:470
 msgid "Failed to find DRM devices"
 msgstr ""
 
-#: detect.c:184
+#: detect.c:475
 msgid "Failed to allocate memory for DRM\n"
 msgstr ""
 
-#: detect.c:187
+#: detect.c:478
 msgid "Failed to get DRM devices"
 msgstr ""
 
-#: detect.c:225
+#: detect.c:527
 msgid "Failed to get device info"
 msgstr ""
 
-#: detect.c:230
+#: detect.c:532
 #, c-format
 msgid "Unsupported bus type %d\n"
 msgstr ""
 
-#: detect.c:261
+#: detect.c:594
 #, c-format
-msgid "DRM device detection is not compiled in (libdrm 2.4.66 required)\n"
+msgid "Forcing the direct MMIO register path.\n"
 msgstr ""
 
-#: detect.c:287
-#, c-format
-msgid "Forcing the /dev/mem path.\n"
-msgstr ""
-
-#: detect.c:298
+#: detect.c:602
 msgid "Can't find Radeon cards"
 msgstr ""
 
-#: dump.c:48
+#: detect.c:605
+msgid "The selected Radeon device has no PCI identity"
+msgstr ""
+
+#: dump.c:191
 #, c-format
 msgid "Dumping to %s, "
 msgstr ""
 
-#: dump.c:51
+#: dump.c:194
 #, c-format
 msgid "line limit %u.\n"
 msgstr ""
 
-#: dump.c:53
-msgid "until termination."
+#: dump.c:196
+msgid "until termination.\n"
 msgstr ""
 
-#: dump.c:63
+#: dump.c:206
 msgid "Can't open file for writing."
 msgstr ""
 
-#: radeon.c:93
+#: dump.c:210
+#, c-format
+msgid "Another capture owns the output file.\n"
+msgstr ""
+
+#: dump.c:217
+#, c-format
+msgid "Failed writing the capture provenance header.\n"
+msgstr ""
+
+#: dump.c:264 ui.c:147
+#, c-format
+msgid "The collector lost the device, stopping.\n"
+msgstr ""
+
+#: dump.c:279 ui.c:151
+#, c-format
+msgid "The collector wait failed, stopping.\n"
+msgstr ""
+
+#: dump.c:286
+#, c-format
+msgid "The capture lost a completed measurement window, stopping.\n"
+msgstr ""
+
+#: dump.c:296 dump.c:306
+#, c-format
+msgid "Failed writing the dump output.\n"
+msgstr ""
+
+#: radeon.c:135
 msgid "Failed to get maximum shader clock"
 msgstr ""
 
-#: radeon.c:107
+#: radeon.c:153
 #, c-format
 msgid ""
 "GPU usage reporting via libdrm is disabled (radeon kernel driver 2.42.0 "
 "required), attempting memory path\n"
 msgstr ""
 
-#: radeon.c:109
+#: radeon.c:155
 #, c-format
 msgid ""
 "GPU usage reporting via libdrm is not compiled in (libdrm 2.4.71 required), "
 "attempting memory path\n"
 msgstr ""
 
-#: radeon.c:135
+#: radeon.c:181
 #, c-format
 msgid ""
 "Memory usage reporting is disabled (radeon kernel driver 2.39.0 required)\n"
 msgstr ""
 
-#: radeon.c:137
+#: radeon.c:183
 #, c-format
 msgid "Memory usage reporting is not compiled in (libdrm 2.4.53 required)\n"
 msgstr ""
 
-#: radeontop.c:32
+#: radeontop.c:45
+msgid "Failed to install the termination handlers"
+msgstr ""
+
+#: radeontop.c:69
+#, c-format
+msgid "Invalid %s '%s': expected hexadecimal %lx to %lx\n"
+msgstr ""
+
+#: radeontop.c:72
+#, c-format
+msgid "Invalid %s '%s': expected %lu to %lu\n"
+msgstr ""
+
+#: radeontop.c:93
 #, c-format
 msgid ""
 "\n"
-"\tRadeonTop for R600 and above.\n"
+"\tRadeonTop for R600 and later, plus R300-class integrated RS4xx GPUs.\n"
 "\n"
-"\tUsage: %s [-chmv] [-b bus] [-d file] [-i seconds] [-l limit] [-p device] [-"
-"t ticks]\n"
+"\tUsage: %s [-cThmv] [--dither-seed seed] [-b bus] [-d file] [-i seconds] [-"
+"l limit] [-p device] [-t ticks]\n"
 "\n"
-"-b --bus 3\t\tPick card from this PCI bus (hexadecimal)\n"
+"-b --bus 3\t\tPick card from the selected PCI bus (hexadecimal)\n"
 "-c --color\t\tEnable colors\n"
-"-d --dump file\t\tDump data to this file, - for stdout\n"
+"-d --dump file\t\tDump data to the named file, - for stdout\n"
 "-i --dump-interval 1\tNumber of seconds between dumps (default %u)\n"
 "-l --limit 3\t\tQuit after dumping N lines, default forever\n"
-"-m --mem\t\tForce the /dev/mem path, for the proprietary driver\n"
+"-m --mem\t\tForce the validated PCI sysfs resourceN MMIO path\n"
 "-p --path device\tOpen DRM device node by path\n"
 "-t --ticks 50\t\tSamples per second (default %u)\n"
 "-T --transparency\tEnable transparency\n"
+"   --dither-seed 7\tOffset each sample inside its own slot, seeded by N,\n"
+"\t\t\tso a workload periodic at a harmonic of the sample\n"
+"\t\t\trate meets a moving phase.  Omit for the exact grid.\n"
 "\n"
-"-h --help\t\tShow this help\n"
+"-h --help\t\tShow usage help\n"
 "-v --version\t\tShow the version\n"
 msgstr ""
 
-#: radeontop.c:144
-msgid "Unknown Radeon card. <= R500 won't work, new cards might."
+#: radeontop.c:123
+msgid "Failed to drop effective privileges"
 msgstr ""
 
-#: ui.c:84
+#: radeontop.c:194
+msgid "tick count"
+msgstr ""
+
+#: radeontop.c:208
+msgid "bus number"
+msgstr ""
+
+#: radeontop.c:215
+msgid "dump limit"
+msgstr ""
+
+#: radeontop.c:221
+msgid "dump interval"
+msgstr ""
+
+#: radeontop.c:230
+msgid "dither seed"
+msgstr ""
+
+#: radeontop.c:236
+#, c-format
+msgid "Unexpected operand '%s'\n"
+msgstr ""
+
+#: radeontop.c:253
+msgid "Failed to drop privileges"
+msgstr ""
+
+#: radeontop.c:257
+msgid "Unsupported Radeon PCI ID: no validated family model"
+msgstr ""
+
+#: radeontop.c:269
+msgid "Failed to initialize the collector clock"
+msgstr ""
+
+#: radeontop.c:294
+msgid "Failed to initialize capture provenance"
+msgstr ""
+
+#: radeontop.c:299
+msgid "Failed to initialize the collector"
+msgstr ""
+
+#: radeontop.c:304
+msgid "Failed to start the collector thread"
+msgstr ""
+
+#: radeontop.c:318
+#, c-format
+msgid "Failed to join the collector thread.\n"
+msgstr ""
+
+#: ui.c:134
 #, c-format
 msgid "Collecting data, please wait....\n"
 msgstr ""
 
-#: ui.c:129
+#: ui.c:161
+#, c-format
+msgid "Failed to initialize the terminal interface.\n"
+msgstr ""
+
+#: ui.c:202
 #, c-format
 msgid "radeontop %s, running on %s bus %02x, %u samples/sec"
 msgstr ""
 
-#: ui.c:170
+#: ui.c:217
 #, c-format
-msgid "Graphics pipe %6.2f%%"
+msgid "Failed to read the display clock.\n"
 msgstr ""
 
-#: ui.c:176
-#, c-format
-msgid "Event Engine %6.2f%%"
-msgstr ""
-
-#: ui.c:183
-#, c-format
-msgid "Vertex Grouper + Tesselator %6.2f%%"
-msgstr ""
-
-#: ui.c:191
-#, c-format
-msgid "Texture Addresser %6.2f%%"
-msgstr ""
-
-#: ui.c:196
-#, c-format
-msgid "Texture Cache %6.2f%%"
-msgstr ""
-
-#: ui.c:205
-#, c-format
-msgid "Shader Export %6.2f%%"
-msgstr ""
-
-#: ui.c:208
-#, c-format
-msgid "Sequencer Instruction Cache %6.2f%%"
-msgstr ""
-
-#: ui.c:211
-#, c-format
-msgid "Shader Interpolator %6.2f%%"
-msgstr ""
-
-#: ui.c:216
-#, c-format
-msgid "Shader Memory Exchange %6.2f%%"
-msgstr ""
-
-#: ui.c:224
-#, c-format
-msgid "Scan Converter %6.2f%%"
-msgstr ""
-
-#: ui.c:227
-#, c-format
-msgid "Primitive Assembly %6.2f%%"
-msgstr ""
-
-#: ui.c:234
-#, c-format
-msgid "Depth Block %6.2f%%"
-msgstr ""
-
-#: ui.c:237
-#, c-format
-msgid "Color Block %6.2f%%"
-msgstr ""
-
-#: ui.c:242
-#, c-format
-msgid "Clip Rectangle %6.2f%%"
-msgstr ""
-
-#: ui.c:253
-#, c-format
-msgid "%.0fM / %.0fM VRAM %6.2f%%"
-msgstr ""
-
-#: ui.c:261
-#, c-format
-msgid "%.0fM / %.0fM GTT %6.2f%%"
+#: ui.c:267
+msgid "collector: device lost"
 msgstr ""
 
 #: ui.c:270
 #, c-format
+msgid "gen %llu  age %.1fs  STALE"
+msgstr ""
+
+#: ui.c:274
+#, c-format
+msgid "gen %llu  age %.1fs  coverage %.1f%%  missed %llu  failed %llu"
+msgstr ""
+
+#: ui.c:287
+#, c-format
+msgid "Graphics pipe %6.2f%%"
+msgstr ""
+
+#: ui.c:293
+#, c-format
+msgid "Event Engine %6.2f%%"
+msgstr ""
+
+#: ui.c:300
+#, c-format
+msgid "Vertex Grouper + Tesselator %6.2f%%"
+msgstr ""
+
+#: ui.c:313
+#, c-format
+msgid "Texture Addresser %6.2f%%"
+msgstr ""
+
+#: ui.c:319
+#, c-format
+msgid "Texture Cache %6.2f%%"
+msgstr ""
+
+#: ui.c:329
+#, c-format
+msgid "Shader Export %6.2f%%"
+msgstr ""
+
+#: ui.c:334
+#, c-format
+msgid "Sequencer Instruction Cache %6.2f%%"
+msgstr ""
+
+#: ui.c:339
+#, c-format
+msgid "Shader Interpolator %6.2f%%"
+msgstr ""
+
+#: ui.c:345
+#, c-format
+msgid "Shader Memory Exchange %6.2f%%"
+msgstr ""
+
+#: ui.c:354
+#, c-format
+msgid "Scan Converter %6.2f%%"
+msgstr ""
+
+#: ui.c:358
+#, c-format
+msgid "Primitive Assembly %6.2f%%"
+msgstr ""
+
+#: ui.c:366
+#, c-format
+msgid "Depth Block %6.2f%%"
+msgstr ""
+
+#: ui.c:371
+#, c-format
+msgid "Color Block %6.2f%%"
+msgstr ""
+
+#: ui.c:377
+#, c-format
+msgid "Clip Rectangle %6.2f%%"
+msgstr ""
+
+#: ui.c:383
+#, c-format
+msgid "Command Stream %6.2f%%"
+msgstr ""
+
+#: ui.c:387
+#, c-format
+msgid "2D Engine %6.2f%%"
+msgstr ""
+
+#: ui.c:391
+#, c-format
+msgid "2D Backend %6.2f%%"
+msgstr ""
+
+#: ui.c:395
+#, c-format
+msgid "Cmd Fetch %6.2f%%"
+msgstr ""
+
+#: ui.c:399
+#, c-format
+msgid "UVD %6.2f%%"
+msgstr ""
+
+#: ui.c:403
+#, c-format
+msgid "VCE %6.2f%%"
+msgstr ""
+
+#: ui.c:413
+#, c-format
+msgid "%.0fM / %.0fM VRAM %6.2f%%"
+msgstr ""
+
+#: ui.c:421
+#, c-format
+msgid "%.0fM / %.0fM GTT %6.2f%%"
+msgstr ""
+
+#: ui.c:434
+#, c-format
 msgid "%.2fG / %.2fG Memory Clock %6.2f%%"
 msgstr ""
 
-#: ui.c:273
+#: ui.c:442
 #, c-format
 msgid "%.2fG / %.2fG Shader Clock %6.2f%%"
 msgstr ""

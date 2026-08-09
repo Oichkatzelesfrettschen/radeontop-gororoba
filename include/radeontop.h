@@ -24,6 +24,10 @@
 
 #include "version.h"
 #include "gettext.h"
+#include "capture.h"
+#include "device_model.h"
+#include "privileges.h"
+#include "rs480_observation.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,11 +41,6 @@
 #include "collector.h"
 
 enum {
-	GRBM_STATUS = 0x8010,
-	// R300-class (RS400/RS480/RS482/RS485) report engine-busy in RBBM_STATUS,
-	// not the R600+ GRBM_STATUS.  0x0E40 sits inside the BAR2 SRBM map window,
-	// so the MMIO path reads it from srbm_area without a second mmap.
-	RBBM_STATUS = 0x0e40,
 	SRBM_STATUS = 0xe50,
 	SRBM_STATUS2 = 0xe4c,
 	// The R600+ MMIO path maps a window starting at GRBM_MMAP_BASE, so
@@ -58,20 +57,22 @@ void authenticate_drm(int fd);
 
 // radeontop.c
 // die exits, so the noreturn attribute tells the compiler and the analyzers
-// that control stops there.  Without it every `if (!p) die(...)` guard reads as
-// a path that falls through to the dereference below, and cppcheck reports the
-// guarded allocation in collect() as nullPointerOutOfMemory.  cppcheck 2.21.1
+// that control terminates at the call.  Without the attribute every
+// `if (!p) die(...)` guard appears to fall through to its guarded dereference,
+// and cppcheck reports collect() as nullPointerOutOfMemory.  cppcheck 2.21.1
 // honors the GNU attribute spelling and not the C11 _Noreturn keyword on a
 // prototype, and the build already requires GNU C through -std=gnu11.
 __attribute__((noreturn)) void die(const char *why);
 
 // detect.c
-void init_pci(const char *path, short *bus, unsigned int *device_id, const unsigned char forcemem);
+void init_pci(const char *path, short *bus,
+		struct radeon_device_identity *identity,
+		const unsigned char forcemem);
 int getfamily(unsigned int id);
 void initbits(int fam);
-void cleanup();
+void cleanup(void);
 
-// The null readers stand for a signal this part does not have.  The backend
+// The null readers stand for a signal the selected part does not have.  The backend
 // adapter compares against them to build its capability mask, which is what
 // separates unsupported from supported-but-failed.
 int getuint32_null(uint32_t *out);
@@ -91,7 +92,7 @@ struct engine_masks collector_masks_from_bits(void);
 
 // radeontop.c
 // A signal handler may only touch a volatile sig_atomic_t, and both output
-// modes observe this one so an interrupt reaches the same orderly shutdown that
+// modes observe terminate_requested so an interrupt reaches the same orderly shutdown that
 // a line limit or a UI quit does.
 extern volatile sig_atomic_t terminate_requested;
 
@@ -106,74 +107,8 @@ int present(struct collector *collector, const struct engine_masks *masks,
 // or the output stream failed, because a truncated capture is not a successful
 // run.
 int dumpdata(struct collector *collector, const struct engine_masks *masks,
+		const struct radeontop_capture_metadata *metadata,
 		const char file[], const unsigned int limit, const unsigned char bus);
-
-// chips
-enum radeon_family {
-	UNKNOWN_CHIP,
-	RS480,
-	R600,
-	RV610,
-	RV630,
-	RV670,
-	RV620,
-	RV635,
-	RS780,
-	RS880,
-	RV770,
-	RV730,
-	RV710,
-	RV740,
-	CEDAR,
-	REDWOOD,
-	JUNIPER,
-	CYPRESS,
-	HEMLOCK,
-	PALM,
-	SUMO,
-	SUMO2,
-	BARTS,
-	TURKS,
-	CAICOS,
-	CAYMAN,
-	ARUBA,
-	TAHITI,
-	PITCAIRN,
-	VERDE,
-	OLAND,
-	HAINAN,
-	BONAIRE,
-	KABINI,
-	MULLINS,
-	KAVERI,
-	HAWAII,
-	TOPAZ,
-	TONGA,
-	FIJI,
-	CARRIZO,
-	STONEY,
-	POLARIS11,
-	POLARIS10,
-	POLARIS12,
-	VEGAM,
-	VEGA10,
-	VEGA12,
-	VEGA20,
-	RAVEN,
-	ARCTURUS,
-	NAVI10,
-	NAVI14,
-	RENOIR,
-	NAVI12,
-	SIENNA_CICHLID,
-	VANGOGH,
-	YELLOW_CARP,
-	NAVY_FLOUNDER,
-	DIMGREY_CAVEFISH,
-	ALDEBARAN,
-	CYAN_SKILLFISH,
-	BEIGE_GOBY,
-};
 
 extern const char * const family_str[];
 
@@ -213,13 +148,6 @@ extern uint64_t gttsize;
 extern unsigned int sclk_max;
 extern unsigned int mclk_max;
 
-struct rs480_gart_observed_t {
-	unsigned char valid;
-	uint32_t agp_base_2;
-	uint32_t gart_feature_id;
-	uint32_t gart_base;
-};
-
 extern struct rs480_gart_observed_t rs480_gart_observed;
 
 // radeon.c
@@ -227,6 +155,6 @@ void init_radeon(int fd, int drm_major, int drm_minor, int family);
 
 // amdgpu.c
 void init_amdgpu(int fd);
-void cleanup_amdgpu();
+void cleanup_amdgpu(void);
 
 #endif
