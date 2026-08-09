@@ -314,7 +314,10 @@ make source-intelligence SOURCE_INTELLIGENCE_DIR="$source_intelligence_dir"
 
 The bundle contains:
 
-- a sorted C/H denominator with byte counts, line counts, and SHA-256 hashes;
+- a sorted tracked C/H denominator with byte counts, line counts, SHA-256
+  hashes, disjoint C/header partitions, and exact-union proof;
+- known-bad denominator mutations for an ignored generated header, a duplicate
+  path, and a missing tracked source;
 - repository commit, branch, and worktree status;
 - cflow runtime forward, reverse, DOT, and SVG call graphs;
 - per-test forward and reverse cflow trees and graphs that include every
@@ -337,6 +340,13 @@ lines from that explained diagnostic set or empty stderr, rejects duplicates and
 every other diagnostic, and retains the original bytes in `ctags.stderr`.
 Positive and negative symbol calibrations separately determine whether the C
 index is usable.
+
+The tracked denominator excludes `include/version.h`, whose ignored build
+identity can survive while `git status --short` remains empty. Every source
+index, lexical graph, callback inventory, and complexity consumer derives from
+the validated denominator or its exact C or runtime subset. The Makefile
+regenerates `include/version.h` before the compiler include graph records it as
+a build dependency.
 
 These products prove lexical structure, indexed reachability, and the exact
 `TEST_DRM_BUS_DISCOVERY` branch selection represented by the two configured

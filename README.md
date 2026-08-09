@@ -140,12 +140,15 @@ For example:
 make amdgpu=1 xcb=1 plain=1
 ```
 
-The source-intelligence target creates bounded forward and reverse cflow maps
-for the runtime and every linked test path, including line-preserving
-`TEST_DRM_BUS_DISCOVERY` projections for both detection executables. It also
-creates cscope, Ctags, and GNU Global indexes, compiler dependency graphs,
-complexity reports, tool identities, calibration results, and a verified
-SHA-256 manifest. The destination must be empty.
+The source-intelligence target derives one exact tracked C/H denominator and
+creates bounded forward and reverse cflow maps for the runtime and every linked
+test path, including line-preserving `TEST_DRM_BUS_DISCOVERY` projections for
+both detection executables. It also creates cscope, Ctags, and GNU Global
+indexes, compiler dependency graphs, complexity reports, tool identities,
+calibration results, and a verified SHA-256 manifest. The ignored generated
+`include/version.h` stays outside the tracked denominator and enters only the
+compiler include graph as a regenerated build dependency. The destination must
+be empty.
 
 ```sh
 source_intelligence_dir=$(mktemp -d)

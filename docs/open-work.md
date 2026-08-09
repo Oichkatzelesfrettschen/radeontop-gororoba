@@ -95,7 +95,8 @@ restate one asks for a narrower contract or evidence class.
 - The source-intelligence target emits hashed runtime and linked-test cflow,
   line-preserving detection-test macro projections, cscope, ctags, Global,
   compiler-include, callback, complexity, and tool-version products from one
-  exact C/H denominator.
+  exact tracked C/H denominator. The compiler include graph carries the
+  regenerated version header as an explicit build dependency.
 - The CLI rejects every positional operand without permuting the command vector.
   The CLI documentation verifier derives long names, short names, and argument
   requirements from `getopt_long`, compares the binary, man source, and generated

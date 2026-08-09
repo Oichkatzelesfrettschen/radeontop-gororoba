@@ -45,7 +45,7 @@ mkdir -p "$output_dir"
 output_dir=$(CDPATH='' cd -- "$output_dir" && pwd)
 
 for tool in cflow cscope ctags readtags gtags global lizard scc dot unifdef \
-	git sha256sum pkg-config cc awk sed find sort wc grep rg basename; do
+	git sha256sum pkg-config cc awk sed find sort wc grep rg basename cmp cp; do
 	command -v "$tool" >/dev/null 2>&1 || {
 		echo "required tool is unavailable: $tool" >&2
 		exit 1
@@ -55,15 +55,85 @@ done
 cd "$repo_root"
 export LC_ALL=C
 
-find . -type f \( -name '*.c' -o -name '*.h' \) \
-	! -path './.git/*' -print | sort > "$output_dir/source-files.txt"
+source_denominator_valid() {
+	candidate=$1
+	canonical=$2
+
+	[ -s "$candidate" ] && sort -C -u "$candidate" &&
+		cmp -s "$candidate" "$canonical" || return 1
+
+	while IFS= read -r source_file; do
+		case "$source_file" in
+			./*.c|./*.h) ;;
+			*) return 1 ;;
+		esac
+		case "$source_file" in
+			*[!A-Za-z0-9_./-]*) return 1 ;;
+		esac
+		[ -f "$source_file" ] && [ ! -L "$source_file" ] &&
+			git ls-files --error-unmatch -- "${source_file#./}" \
+				>/dev/null 2>&1 || return 1
+	done < "$candidate"
+}
+
+canonical_sources=$output_dir/calibration-source-denominator-known-good.txt
+git ls-files -- '*.c' '*.h' | sed 's#^#./#' | sort > "$canonical_sources"
+source_denominator_valid "$canonical_sources" "$canonical_sources"
+cp "$canonical_sources" "$output_dir/source-files.txt"
+source_denominator_valid "$output_dir/source-files.txt" "$canonical_sources"
+
+# include/version.h is a build product.  A clean Git status hides ignored files,
+# so explicit tracked-file membership keeps stale build identity outside the
+# primary source denominator and its lexical consumers.
+git check-ignore -q -- include/version.h
+! git ls-files --error-unmatch -- include/version.h >/dev/null 2>&1
+[ -f include/version.h ] || {
+	echo "generated build header is unavailable: run the Makefile target" >&2
+	exit 1
+}
+source_untracked_bad=$output_dir/calibration-source-denominator-untracked-known-bad.txt
+{
+	awk '1' "$canonical_sources"
+	printf '%s\n' './include/version.h'
+} | sort > "$source_untracked_bad"
+if source_denominator_valid "$source_untracked_bad" "$canonical_sources"; then
+	echo "source denominator accepted an ignored generated header" >&2
+	exit 1
+fi
+
+source_duplicate_bad=$output_dir/calibration-source-denominator-duplicate-known-bad.txt
+grep -Fxq './collector.c' "$canonical_sources"
+{
+	awk '1' "$canonical_sources"
+	printf '%s\n' './collector.c'
+} | sort > "$source_duplicate_bad"
+if source_denominator_valid "$source_duplicate_bad" "$canonical_sources"; then
+	echo "source denominator accepted a duplicate path" >&2
+	exit 1
+fi
+
+source_missing_bad=$output_dir/calibration-source-denominator-missing-known-bad.txt
+grep -Fvx './collector.c' "$canonical_sources" > "$source_missing_bad"
+if source_denominator_valid "$source_missing_bad" "$canonical_sources"; then
+	echo "source denominator accepted a missing tracked source" >&2
+	exit 1
+fi
 
 [ -s "$output_dir/source-files.txt" ] || {
 	echo "source denominator is empty" >&2
 	exit 1
 }
 
-find . -maxdepth 1 -type f -name '*.c' -print | sort \
+awk '/\.c$/ { print }' "$output_dir/source-files.txt" \
+	> "$output_dir/c-source-files.txt"
+awk '/\.h$/ { print }' "$output_dir/source-files.txt" \
+	> "$output_dir/header-source-files.txt"
+awk '1' "$output_dir/c-source-files.txt" "$output_dir/header-source-files.txt" |
+	sort > "$output_dir/source-partition-union.txt"
+sort -C -u "$output_dir/source-partition-union.txt"
+cmp -s "$output_dir/source-partition-union.txt" "$output_dir/source-files.txt"
+
+awk '/^\.\/[^/]+\.c$/ { print }' "$output_dir/c-source-files.txt" \
 	> "$output_dir/runtime-source-files.txt"
 [ -s "$output_dir/runtime-source-files.txt" ] || {
 	echo "runtime source denominator is empty" >&2
@@ -159,6 +229,14 @@ while IFS= read -r source_file; do
 	set -- "$@" "$source_file"
 done < "$output_dir/runtime-source-files.txt"
 write_call_graph runtime "$@"
+
+for graph_source in ./tests/capture_test.c ./capture.c ./collector.c \
+	./device_model.c ./tests/collector_test.c ./tests/detect_path_test.c ./detect.c \
+	./rs480_observation.c ./tests/device_model_test.c \
+	./tests/privileges_test.c ./privileges.c \
+	./tests/rs480_observation_test.c; do
+	grep -Fxq "$graph_source" "$output_dir/source-files.txt"
+done
 
 configured_detect_source_valid() {
 	configured_source=$1
@@ -265,13 +343,19 @@ grep -q 'radeontop.c' "$output_dir/calibration-global-known-good.txt"
 
 lizard -l cpp -f "$output_dir/source-files.txt" --csv \
 	> "$output_dir/lizard-complexity.csv"
-set -- ./*.c ./include/*.h ./tests/*.c
+set --
+while IFS= read -r source_file; do
+	set -- "$@" "$source_file"
+done < "$output_dir/source-files.txt"
 scc --ci --by-file --format json "$@" \
 	> "$output_dir/scc-by-file.json"
 
 # Compiler dependencies capture preprocessing edges that lexical call tools do
 # not see.  pkg-config emits trusted compiler flags for available dependencies.
-set -- ./*.c ./tests/*.c
+set --
+while IFS= read -r source_file; do
+	set -- "$@" "$source_file"
+done < "$output_dir/c-source-files.txt"
 compiler_flags=-Iinclude
 for package in pciaccess libdrm; do
 	package_flags=$(pkg-config --cflags "$package") || {
@@ -309,8 +393,12 @@ dot -Tsvg "$output_dir/compiler-include-graph.dot" \
 	-o "$output_dir/compiler-include-graph.svg"
 
 callback_binding_pattern='(getgrbm|getsrbm2|getsrbm|getvram|getgtt|getsclk|getmclk|read_status|read_uvd_status|read_vce_status|read_sclk|read_mclk|read_vram|read_gtt|wait_until|wake)[[:space:]]*='
+set --
+while IFS= read -r source_file; do
+	set -- "$@" "$source_file"
+done < "$output_dir/c-source-files.txt"
 rg -n --no-heading "$callback_binding_pattern" \
-	-- ./*.c ./tests/*.c > "$output_dir/callback-bindings.txt"
+	-- "$@" > "$output_dir/callback-bindings.txt"
 for required_binding in \
 	'getsrbm2 = getsrbm2_pci;' \
 	'getsrbm2 = getsrbm2_radeon;' \

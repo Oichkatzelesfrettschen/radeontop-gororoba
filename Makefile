@@ -229,6 +229,7 @@ source-intelligence:
 		echo "set SOURCE_INTELLIGENCE_DIR to an empty output directory" >&2; \
 		exit 2; \
 	}
+	@$(MAKE) --no-print-directory $(verh)
 	./tools/radeontop-source-intelligence.sh "$(SOURCE_INTELLIGENCE_DIR)"
 
 # FORCE runs getver.sh on every build so source dirtiness and changed build
