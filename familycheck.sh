@@ -28,10 +28,10 @@ extract_families() {
 	output_file=$2
 	parsed_file=$output_file.parsed
 
-	[ -r "$input_file" ] && [ -f "$input_file" ] || {
+	if [ ! -f "$input_file" ] || [ ! -r "$input_file" ]; then
 		echo "family input is unavailable: $input_file" >&2
 		return 1
-	}
+	fi
 
 	if ! awk -F, '
 		/^[[:space:]]*CHIPSET[[:space:]]*\(/ {
@@ -72,10 +72,10 @@ verify_families() {
 	result=0
 
 	for required_input in "$name_table" "$enum_header"; do
-		[ -r "$required_input" ] && [ -f "$required_input" ] || {
+		if [ ! -f "$required_input" ] || [ ! -r "$required_input" ]; then
 			echo "family input is unavailable: $required_input" >&2
 			return 1
-		}
+		fi
 	done
 
 	extract_families "$r300_table" "$r300_families" || return 1
