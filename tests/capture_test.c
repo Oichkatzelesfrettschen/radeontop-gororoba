@@ -441,7 +441,13 @@ static void check_append_record_boundary(void) {
 	CHECK(radeontop_capture_write_append_boundary(NULL) != 0);
 }
 
-static int emit_json_fixture(bool clock_failure) {
+enum json_fixture_kind {
+	JSON_FIXTURE_DEVICE_READ_BEFORE_FIRST = 0,
+	JSON_FIXTURE_PUBLICATION_CLOCK_BEFORE_FIRST,
+	JSON_FIXTURE_CLOCK_WAIT_AFTER_GENERATION_ONE
+};
+
+static int emit_json_fixture(enum json_fixture_kind fixture_kind) {
 	char encoded_argument[] = {
 		'u', 't', 'f', '8', ':', (char) 0xc3, (char) 0xa9,
 		':', (char) 0xff, '\0'
@@ -451,8 +457,11 @@ static int emit_json_fixture(bool clock_failure) {
 	struct collector_snapshot snapshot;
 	struct collector_terminal terminal;
 	struct engine_masks masks;
-	const char *reason = clock_failure ? "collector-clock-error" :
-		"collector-device-error";
+	const struct collector_snapshot *footer_snapshot = NULL;
+	const char *reason;
+	uint64_t last_generation = 0;
+	unsigned int record_count = 0;
+	bool emit_evidence = false;
 
 	memset(&metadata, 0, sizeof(metadata));
 	memcpy(metadata.run_id, "11111111-2222-4333-8444-555555555555", 37);
@@ -491,20 +500,38 @@ static int emit_json_fixture(bool clock_failure) {
 		COLLECTOR_CAP_VRAM;
 	masks.lane[COLLECTOR_LANE_GUI] = 1U << 31;
 	snapshot.lane_busy[COLLECTOR_LANE_GUI] = 1;
-	terminal.cause = clock_failure ?
-		COLLECTOR_TERMINAL_CLOCK_PUBLICATION_MONOTONIC :
-		COLLECTOR_TERMINAL_DEVICE_READ;
-	terminal.after_generation = 0;
-	terminal.read_result_valid = !clock_failure;
-	terminal.read_result = clock_failure ? COLLECTOR_READ_OK :
-		COLLECTOR_READ_FATAL;
+	switch (fixture_kind) {
+		case JSON_FIXTURE_DEVICE_READ_BEFORE_FIRST:
+			reason = "collector-device-error";
+			terminal.cause = COLLECTOR_TERMINAL_DEVICE_READ;
+			terminal.read_result_valid = true;
+			terminal.read_result = COLLECTOR_READ_FATAL;
+			break;
+		case JSON_FIXTURE_PUBLICATION_CLOCK_BEFORE_FIRST:
+			reason = "collector-clock-error";
+			terminal.cause = COLLECTOR_TERMINAL_CLOCK_PUBLICATION_MONOTONIC;
+			break;
+		case JSON_FIXTURE_CLOCK_WAIT_AFTER_GENERATION_ONE:
+			reason = "collector-clock-error";
+			terminal.cause = COLLECTOR_TERMINAL_CLOCK_WAIT;
+			terminal.after_generation = snapshot.generation;
+			emit_evidence = true;
+			last_generation = snapshot.generation;
+			record_count = 1;
+			footer_snapshot = &snapshot;
+			break;
+		default:
+			return 2;
+	}
 
-	if (radeontop_capture_write_header(stdout, &metadata) ||
-		fputs("sample", stdout) == EOF ||
+	if (radeontop_capture_write_header(stdout, &metadata))
+		return 1;
+	if (emit_evidence && (fputs("sample", stdout) == EOF ||
 		radeontop_capture_write_snapshot_evidence(stdout, metadata.run_id,
-			&masks, &snapshot) || fputc('\n', stdout) == EOF ||
-		radeontop_capture_write_run_end(stdout, metadata.run_id,
-			reason, 1, 0, 0, NULL, &terminal))
+			&masks, &snapshot) || fputc('\n', stdout) == EOF))
+		return 1;
+	if (radeontop_capture_write_run_end(stdout, metadata.run_id,
+			reason, 1, last_generation, record_count, footer_snapshot, &terminal))
 		return 1;
 
 	return fflush(stdout) ? 1 : 0;
@@ -585,10 +612,15 @@ static void check_system_metadata(void) {
 }
 
 int main(int argc, char **argv) {
-	if (argc == 2 && !strcmp(argv[1], "--emit-json-fixture"))
-		return emit_json_fixture(false);
-	if (argc == 2 && !strcmp(argv[1], "--emit-clock-json-fixture"))
-		return emit_json_fixture(true);
+	if (argc == 2 && !strcmp(argv[1],
+			"--emit-device-read-before-first-json-fixture"))
+		return emit_json_fixture(JSON_FIXTURE_DEVICE_READ_BEFORE_FIRST);
+	if (argc == 2 && !strcmp(argv[1],
+			"--emit-publication-clock-before-first-json-fixture"))
+		return emit_json_fixture(JSON_FIXTURE_PUBLICATION_CLOCK_BEFORE_FIRST);
+	if (argc == 2 && !strcmp(argv[1],
+			"--emit-clock-wait-after-generation-one-json-fixture"))
+		return emit_json_fixture(JSON_FIXTURE_CLOCK_WAIT_AFTER_GENERATION_ONE);
 	if (argc != 1)
 		return 2;
 
