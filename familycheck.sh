@@ -42,8 +42,11 @@ extract_families() {
 			family = $3
 			sub(/\).*/, "", family)
 			gsub(/^[[:space:]]+|[[:space:]]+$/, "", family)
-			if (family != "")
-				print family
+			if (family == "") {
+				malformed = 1
+				next
+			}
+			print family
 		}
 		END { if (malformed) exit 2 }
 	' "$input_file" > "$parsed_file"; then
@@ -143,5 +146,13 @@ if [ "${1:-}" = "--self-test" ]; then
 		exit 1
 	fi
 	printf '%s\n' \
-		"family check: known-good accepted, empty, missing-family, and parser-failure inputs rejected"
+		'CHIPSET(0x5974, 0, RS480)' \
+		'CHIPSET(0x5975, 0, )' > "$scratch/empty-family-r300.h"
+	if verify_families "$scratch/empty-family-r300.h" include/r600_pci_ids.h \
+		family_str.c include/device_model.h >/dev/null 2>&1; then
+		echo "negative control accepted an empty CHIPSET family" >&2
+		exit 1
+	fi
+	printf '%s\n' \
+		"family check: known-good accepted; empty denominator, missing family, malformed row, and empty family rejected"
 fi

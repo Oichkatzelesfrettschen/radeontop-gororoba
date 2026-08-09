@@ -58,6 +58,13 @@ static bool lowercase_hex_text_valid(const char *text, size_t length) {
 	return true;
 }
 
+static bool git_object_id_valid(const char *text) {
+	const size_t length = text ? strlen(text) : 0;
+
+	return (length == 40 || length == 64) &&
+		lowercase_hex_text_valid(text, length);
+}
+
 static bool build_identity_valid(
 		const struct radeontop_build_identity *identity) {
 	if (!identity || !identity->version || !identity->version[0] ||
@@ -69,7 +76,7 @@ static bool build_identity_valid(
 	// A capture is a replayable research record.  A clean object supplies every
 	// source byte named by the embedded source manifest; dirty or unknown trees
 	// have no immutable object from which a later reader can recover those bytes.
-	if (!lowercase_hex_text_valid(identity->source_commit, 40))
+	if (!git_object_id_valid(identity->source_commit))
 		return false;
 	if (strcmp(identity->source_state, "clean"))
 		return false;

@@ -17,8 +17,17 @@
 #ifndef PRIVILEGES_H
 #define PRIVILEGES_H
 
+// The effective drop selects the invoking real UID and preserves the saved
+// set-user-ID.  The raise selects UID 0 and therefore requires a saved
+// set-user-ID of 0.  Each transition returns zero only after the effective UID
+// matches its target; -1 leaves an unverified UID state that requires fatal
+// handling before any privileged resource operation.
 int privileges_drop_effective(void);
 int privileges_raise_effective(void);
+
+// The permanent transition returns zero only after the real, effective, and
+// saved UIDs all match the invoking real UID.  It removes any distinct saved
+// identity, and no raise operation follows a successful return.
 int privileges_drop_permanently(void);
 
 #endif

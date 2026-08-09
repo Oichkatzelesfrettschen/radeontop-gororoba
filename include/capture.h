@@ -24,6 +24,7 @@
 
 #define RADEONTOP_CAPTURE_UUID_SIZE 37
 #define RADEONTOP_CAPTURE_SHA256_SIZE 65
+#define RADEONTOP_CAPTURE_GIT_OID_SIZE 65
 
 struct radeontop_build_identity {
 	const char *version;
@@ -40,7 +41,7 @@ struct radeontop_capture_metadata {
 	char boot_id[RADEONTOP_CAPTURE_UUID_SIZE];
 	char kernel_release[256];
 	char source_version[128];
-	char source_commit[41];
+	char source_commit[RADEONTOP_CAPTURE_GIT_OID_SIZE];
 	char source_state[8];
 	char source_sha256[RADEONTOP_CAPTURE_SHA256_SIZE];
 	char build_manifest_sha256[RADEONTOP_CAPTURE_SHA256_SIZE];
@@ -50,6 +51,8 @@ struct radeontop_capture_metadata {
 	struct timespec started_realtime;
 	struct timespec started_monotonic;
 	int argc;
+	// argv borrows the caller's vector and byte strings.  They remain alive and
+	// unchanged through every capture-header write that uses this metadata.
 	char *const *argv;
 	struct radeon_device_identity identity;
 	struct collector_config config;

@@ -67,10 +67,13 @@ case "$source_commit" in
 		exit 2
 		;;
 	*)
-		if [ "${#source_commit}" -ne 40 ]; then
-			echo "SOURCE_COMMIT must contain 40 hexadecimal characters" >&2
-			exit 2
-		fi
+		case "${#source_commit}" in
+			40|64) ;;
+			*)
+				echo "SOURCE_COMMIT must contain 40 or 64 hexadecimal characters" >&2
+				exit 2
+				;;
+		esac
 		;;
 esac
 case "$source_state" in

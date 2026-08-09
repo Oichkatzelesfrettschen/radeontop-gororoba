@@ -207,14 +207,14 @@ int dumpdata(struct collector *collector, const struct engine_masks *masks,
 	// Descriptor type controls locking.  stdout can name a regular append
 	// redirection, and two `-d -` processes must not interleave on that file.
 	if (radeontop_capture_lock_stream(f)) {
-		fprintf(stderr, _("Another capture owns the output file.\n"));
+		fputs(_("Another capture owns the output file.\n"), stderr);
 		if (f != stdout)
 			fclose(f);
 		return 1;
 	}
 
 	if (radeontop_capture_write_header(f, metadata)) {
-		fprintf(stderr, _("Failed writing the capture provenance header.\n"));
+		fputs(_("Failed writing the capture provenance header.\n"), stderr);
 		radeontop_capture_unlock_stream(f);
 		if (f != stdout)
 			fclose(f);
@@ -261,7 +261,7 @@ int dumpdata(struct collector *collector, const struct engine_masks *masks,
 			continue;
 
 		if (wait == COLLECTOR_WAIT_FATAL) {
-			fprintf(stderr, _("The collector lost the device, stopping.\n"));
+			fputs(_("The collector lost the device, stopping.\n"), stderr);
 			end_reason = "collector-fatal";
 			terminal_snapshot = snapshot;
 			terminal_snapshot_valid = true;
@@ -276,7 +276,7 @@ int dumpdata(struct collector *collector, const struct engine_masks *masks,
 			break;
 		}
 		if (wait == COLLECTOR_WAIT_ERROR) {
-			fprintf(stderr, _("The collector wait failed, stopping.\n"));
+			fputs(_("The collector wait failed, stopping.\n"), stderr);
 			end_reason = "wait-error";
 			status = 1;
 			break;
@@ -291,9 +291,8 @@ int dumpdata(struct collector *collector, const struct engine_masks *masks,
 			break;
 		}
 
-		last_generation = snapshot.generation;
 		if (dump_line(f, masks, metadata, &snapshot, bus)) {
-			fprintf(stderr, _("Failed writing the dump output.\n"));
+			fputs(_("Failed writing the dump output.\n"), stderr);
 			end_reason = "write-error";
 			status = 1;
 			break;
@@ -303,12 +302,13 @@ int dumpdata(struct collector *collector, const struct engine_masks *masks,
 		// incomplete, and a research capture that lost lines is not a
 		// successful run.
 		if (fflush(f) || ferror(f)) {
-			fprintf(stderr, _("Failed writing the dump output.\n"));
+			fputs(_("Failed writing the dump output.\n"), stderr);
 			end_reason = "write-error";
 			status = 1;
 			break;
 		}
 
+		last_generation = snapshot.generation;
 		printed++;
 		if (limit && printed >= limit) {
 			end_reason = "line-limit";

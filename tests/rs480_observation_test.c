@@ -81,6 +81,8 @@ static void check_duplicate_input(void) {
 }
 
 int main(void) {
+	struct rs480_gart_parser parser;
+
 	check_complete_input();
 	check_missing_input();
 	check_duplicate_input();
@@ -92,6 +94,9 @@ int main(void) {
 	check_rejected_line("GART_BASE=1\n");
 	check_rejected_line("AGP_BASE_2 garbage = 1\n");
 	CHECK(!rs480_gart_parser_finish(NULL, NULL));
+	rs480_gart_parser_init(&parser);
+	consume_complete(&parser);
+	CHECK(!rs480_gart_parser_finish(&parser, NULL));
 
 	printf("RS480 observation parser: %u checks, %u failed\n",
 		checks, failures);

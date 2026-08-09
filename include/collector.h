@@ -241,11 +241,11 @@ int collector_start(struct collector *collector);
 
 enum collector_wait_result {
 	COLLECTOR_WAIT_SNAPSHOT = 0, // out holds a generation newer than requested
-	COLLECTOR_WAIT_TIMEOUT = 1,  // the deadline passed with no new generation
-	COLLECTOR_WAIT_FINISHED = 2, // the worker exited and publishes no more
+	COLLECTOR_WAIT_TIMEOUT = 1,  // the deadline passed; out stays unmodified
+	COLLECTOR_WAIT_FINISHED = 2, // the worker exited; out holds its last state
 	COLLECTOR_WAIT_FATAL = 3,    // the worker lost the backend; out holds why
-	COLLECTOR_WAIT_ERROR = 4,    // the consumer wait primitive failed
-	COLLECTOR_WAIT_GAP = 5       // an exact consumer lost one or more windows
+	COLLECTOR_WAIT_ERROR = 4,    // the wait primitive failed; out stays unmodified
+	COLLECTOR_WAIT_GAP = 5       // an exact consumer lost windows; out holds latest
 };
 
 // abs_timeout is a CLOCK_MONOTONIC deadline, or NULL to wait indefinitely.  A

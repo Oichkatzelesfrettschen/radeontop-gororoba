@@ -782,8 +782,12 @@ int collector_wait_next(struct collector *collector, uint64_t after_generation,
 int collector_wait_next_contiguous(struct collector *collector,
 		uint64_t after_generation, const struct timespec *abs_timeout,
 		struct collector_snapshot *out) {
-	if (after_generation == UINT64_MAX)
+	if (after_generation == UINT64_MAX) {
+		pthread_mutex_lock(&collector->mutex);
+		*out = collector->snapshot;
+		pthread_mutex_unlock(&collector->mutex);
 		return COLLECTOR_WAIT_GAP;
+	}
 
 	const int result = collector_wait_next(collector, after_generation,
 		abs_timeout, out);

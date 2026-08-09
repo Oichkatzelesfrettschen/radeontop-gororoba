@@ -100,8 +100,13 @@ enum radeon_status_source {
 	RADEON_STATUS_AMDGPU_READ_MM_REGISTERS
 };
 
+enum {
+	RADEON_PCI_RESOURCE_NONE = -1,
+	RADEON_PCI_RESOURCE_COUNT = 6
+};
+
 struct radeon_mmio_layout {
-	unsigned int resource_index;
+	int resource_index;
 	enum radeon_status_source status_source;
 	uint32_t status_register;
 };

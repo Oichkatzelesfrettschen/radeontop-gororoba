@@ -155,6 +155,18 @@ grep -Fq "#define RADEONTOP_SOURCE_COMMIT \"$fixture_commit\"" \
 	"$exported/include/version.h"
 grep -Fq '#define RADEONTOP_SOURCE_STATE "clean"' \
 	"$exported/include/version.h"
+
+sha256_fixture_commit=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+(
+	cd "$exported"
+	RADEONTOP_VERSION=1.4.rexport.g000000000000 \
+	RADEONTOP_SOURCE_COMMIT="$sha256_fixture_commit" \
+	RADEONTOP_SOURCE_STATE=clean \
+	./getver.sh getver.sh input.c
+)
+grep -Fq "#define RADEONTOP_SOURCE_COMMIT \"$sha256_fixture_commit\"" \
+	"$exported/include/version.h"
+
 exported_source_sha256=$(sha256sum \
 	"$exported/include/radeontop-source-manifest.txt" | awk '{print $1}')
 exported_header_sha256=$(awk '
@@ -170,6 +182,16 @@ if (
 	RADEONTOP_VERSION='invalid version' ./getver.sh getver.sh input.c
 ) >/dev/null 2>&1; then
 	echo "invalid version accepted" >&2
+	exit 1
+fi
+
+if (
+	cd "$exported"
+	RADEONTOP_VERSION=1.4.rexport.g000000000000 \
+	RADEONTOP_SOURCE_COMMIT=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde \
+	RADEONTOP_SOURCE_STATE=clean ./getver.sh getver.sh input.c
+) >/dev/null 2>&1; then
+	echo "63-character source object accepted" >&2
 	exit 1
 fi
 

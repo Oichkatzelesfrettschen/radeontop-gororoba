@@ -37,9 +37,17 @@ static const enum radeon_family resource5_grbm_families[] = {
 	CYAN_SKILLFISH, BEIGE_GOBY
 };
 
+enum {
+	RS480_RBBM_FAMILY_COUNT = 1,
+	UNKNOWN_CHIP_FAMILY_COUNT = 1,
+	NON_GRBM_FAMILY_COUNT = RS480_RBBM_FAMILY_COUNT +
+		UNKNOWN_CHIP_FAMILY_COUNT
+};
+
 _Static_assert(
 	sizeof(resource2_grbm_families) / sizeof(resource2_grbm_families[0]) +
-	sizeof(resource5_grbm_families) / sizeof(resource5_grbm_families[0]) + 2 ==
+	sizeof(resource5_grbm_families) / sizeof(resource5_grbm_families[0]) +
+	NON_GRBM_FAMILY_COUNT ==
 	RADEON_FAMILY_COUNT,
 	"the test denominator must classify every radeon family");
 
@@ -51,7 +59,7 @@ _Static_assert(
 	} \
 } while (0)
 
-static void check_layout(enum radeon_family family, unsigned int resource_index,
+static void check_layout(enum radeon_family family, int resource_index,
 		enum radeon_status_source source, uint32_t status_register) {
 	struct radeon_mmio_layout layout;
 
@@ -68,7 +76,7 @@ static void check_rejected_layout(enum radeon_family family) {
 
 	memset(&layout, 0xa5, sizeof(layout));
 	CHECK(!radeon_mmio_layout_for_family(family, &layout));
-	CHECK(layout.resource_index == 0);
+	CHECK(layout.resource_index == RADEON_PCI_RESOURCE_NONE);
 	CHECK(layout.status_source == RADEON_STATUS_UNAVAILABLE);
 	CHECK(layout.status_register == 0);
 }
@@ -129,7 +137,7 @@ int main(void) {
 	CHECK(identity.family == UNKNOWN_CHIP);
 	CHECK(identity.status_source == RADEON_STATUS_UNAVAILABLE);
 	CHECK(identity.status_register == 0);
-	CHECK(identity.resource_index == -1);
+	CHECK(identity.resource_index == RADEON_PCI_RESOURCE_NONE);
 	CHECK(identity.resource_size == 0);
 	CHECK(identity.drm_driver[0] == '\0');
 	CHECK(!radeon_pci_address_matches(&identity, 0, 1, 5, 0));

@@ -16,7 +16,7 @@ format for replayable measurements.
 - R600 and later use `GRBM_STATUS` through the radeon or amdgpu DRM interface
   when that interface supplies the status word.
 - `-m` forces the family-classified PCI `resourceN` path. An unknown PCI ID has
-  no admitted BAR layout and fails before `open` or `mmap`.
+  no admitted BAR layout and fails before a PCI resource open or `mmap`.
 
 The RS4xx total activity gauge follows `RBBM_STATUS.GUI_ACTIVE`. Per-block
 gauges appear only for fields supported by the register decode and bounded

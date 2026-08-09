@@ -114,8 +114,9 @@ void init_amdgpu(int fd) {
 
 			if (!(ret = getmclk_amdgpu(&out32)))
 				getmclk = getmclk_amdgpu;
+			// A Fusion APU has no dedicated memory clock, so its failed
+			// sensor query stays unreported.
 			else if (!(gpu.ids_flags & AMDGPU_IDS_FLAGS_FUSION))
-				// Memory-clock reporting is unavailable on APUs.
 				drmError(ret, _("Failed to get memory clock"));
 		}
 	} else

@@ -128,15 +128,41 @@ write_call_graph() {
 		"$output_dir/cflow-$graph_name-forward.txt"
 }
 
+ctags_diagnostics_valid() {
+	diagnostic_file=$1
+
+	[ -s "$diagnostic_file" ] || return 0
+	awk '
+		$0 == "ctags: Notice: No options will be read from files or environment" {
+			notice++
+			next
+		}
+		$0 == "ctags: Warning: Enabling Cargo subparser may enable TOML parser." {
+			cargo_warning++
+			next
+		}
+		$0 == "ctags: Warning: The current implementation of the TOML parser is broken." {
+			toml_warning++
+			next
+		}
+		{ unexpected++ }
+		END {
+			exit unexpected || notice > 1 || cargo_warning > 1 ||
+				toml_warning > 1
+		}
+	' "$diagnostic_file"
+}
+
 set --
 while IFS= read -r source_file; do
 	set -- "$@" "$source_file"
 done < "$output_dir/runtime-source-files.txt"
 write_call_graph runtime "$@"
 
-# Each test graph includes the production translation units linked by its
-# Makefile rule.  A test-only graph hides the path from the harness into the
-# contract under test and therefore is not a complete executable call map.
+# Each test graph includes the production translation units compiled separately
+# or textually included behind an interposition boundary.  A test-only graph
+# hides the path from the harness into the contract under test and therefore is
+# not a complete executable call map.
 write_call_graph capture-test ./tests/capture_test.c ./capture.c \
 	./collector.c ./device_model.c
 write_call_graph collector-test ./tests/collector_test.c ./collector.c
@@ -155,6 +181,26 @@ cscope -b -q -k -I "$repo_root/include" \
 ctags --options=NONE --languages=C --fields=+nKz --extras=+q \
 	-f "$output_dir/tags" -L "$output_dir/source-files.txt" \
 	2> "$output_dir/ctags.stderr"
+
+printf '%s\n' \
+	'ctags: Notice: No options will be read from files or environment' \
+	'ctags: Warning: Enabling Cargo subparser may enable TOML parser.' \
+	'ctags: Warning: The current implementation of the TOML parser is broken.' \
+	> "$output_dir/calibration-ctags-diagnostics-known-good.txt"
+ctags_diagnostics_valid \
+	"$output_dir/calibration-ctags-diagnostics-known-good.txt"
+printf '%s\n' 'ctags: Warning: unexpected diagnostic' \
+	> "$output_dir/calibration-ctags-diagnostics-known-bad.txt"
+if ctags_diagnostics_valid \
+	"$output_dir/calibration-ctags-diagnostics-known-bad.txt"; then
+	echo "ctags diagnostic validator accepted its negative control" >&2
+	exit 1
+fi
+if ! ctags_diagnostics_valid "$output_dir/ctags.stderr"; then
+	echo "ctags emitted an unexpected diagnostic" >&2
+	sed -n '1,40p' "$output_dir/ctags.stderr" >&2
+	exit 1
+fi
 
 readtags -t "$output_dir/tags" - main \
 	> "$output_dir/calibration-ctags-known-good.txt"

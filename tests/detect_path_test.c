@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <unistd.h>
 #include <xf86drm.h>
 
 static int test_open(const char *path, int flags, ...);
@@ -232,6 +233,7 @@ int main(void) {
 	grbm_window[(GRBM_STATUS - GRBM_MMAP_BASE) / sizeof(uint32_t)] =
 		UINT32_C(0xdeadbeef);
 
+	radeon_device_identity_init(&identity);
 	init_pci("/dev/dri/renderD128", &bus, &identity, 1);
 
 	CHECK(bus == 1);

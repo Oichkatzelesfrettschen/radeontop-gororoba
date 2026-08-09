@@ -38,6 +38,15 @@ enum drm_open_result {
 	DRM_OPEN_BACKEND_READY
 };
 
+_Static_assert(sizeof(((struct pci_device *) 0)->regions) /
+	sizeof(((struct pci_device *) 0)->regions[0]) == RADEON_PCI_RESOURCE_COUNT,
+	"the direct-MMIO resource bound must match libpciaccess");
+
+static bool pci_resource_index_valid(int resource_index) {
+	return resource_index >= 0 &&
+		resource_index < RADEON_PCI_RESOURCE_COUNT;
+}
+
 // function pointers to the right backend
 int (*getgrbm)(uint32_t *out);
 int (*getsrbm)(uint32_t *out);
@@ -104,7 +113,9 @@ static int find_pci(short bus, struct radeon_device_identity *identity) {
 				dev->func, dev->vendor_id, dev->device_id);
 
 			if (radeon_mmio_layout_for_family(identity->family, &layout)) {
-				identity->resource_index = (int) layout.resource_index;
+				if (!pci_resource_index_valid(layout.resource_index))
+					die(_("The family classifier returned an invalid PCI resource index"));
+				identity->resource_index = layout.resource_index;
 				identity->resource_size = dev->regions[layout.resource_index].size;
 			}
 			break;
@@ -194,7 +205,8 @@ static void open_pci(struct radeon_device_identity *identity) {
 	// PCI ID carries no proven BAR index, register, or map bound and therefore
 	// cannot enter the direct MMIO path.
 	if (!identity->pci_address_valid ||
-		!radeon_mmio_layout_for_family(identity->family, &layout))
+		!radeon_mmio_layout_for_family(identity->family, &layout) ||
+		!pci_resource_index_valid(layout.resource_index))
 		die(_("Direct MMIO has no validated layout for the selected Radeon PCI ID"));
 
 	if (!barsize) die(_("Can't get the register area size"));
@@ -217,7 +229,7 @@ static void open_pci(struct radeon_device_identity *identity) {
 	// the resourceN file is the BAR aperture itself.  Its file offset is therefore
 	// BAR-relative (no base_addr term), and MAP_SHARED makes reads hit the device.
 	snprintf(respath, sizeof(respath),
-			"/sys/bus/pci/devices/%04x:%02x:%02x.%u/resource%u",
+			"/sys/bus/pci/devices/%04x:%02x:%02x.%u/resource%d",
 			identity->domain, identity->bus, identity->device,
 			identity->function, layout.resource_index);
 
@@ -268,7 +280,7 @@ static void open_pci(struct radeon_device_identity *identity) {
 	getsrbm2 = getsrbm2_pci;
 	identity->status_source = layout.status_source;
 	identity->status_register = layout.status_register;
-	identity->resource_index = (int) layout.resource_index;
+	identity->resource_index = layout.resource_index;
 }
 
 static void cleanup_pci(void) {
@@ -368,7 +380,7 @@ static enum drm_open_result init_drm(int drm_fd,
 			RADEON_STATUS_RADEON_READ_REG :
 			RADEON_STATUS_AMDGPU_READ_MM_REGISTERS;
 		identity->status_register = GRBM_STATUS;
-		identity->resource_index = -1;
+		identity->resource_index = RADEON_PCI_RESOURCE_NONE;
 		identity->resource_size = 0;
 	}
 

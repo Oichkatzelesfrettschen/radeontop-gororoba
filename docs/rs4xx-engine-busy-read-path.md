@@ -126,7 +126,7 @@ the older bit-exposure rows.
 | 21 | `RE_BUSY` | block busy | clear | masked off | no |
 | 22 | `TAM_BUSY` | block busy | clear | masked off | no |
 | 23 | `TDM_BUSY` | block busy | clear | masked off | no |
-| 24 | `PB_BUSY` | block busy name | clear | masked off | no |
+| 24 | `PB_BUSY` | block busy | clear | masked off | no |
 | 25 | `TIM_BUSY` | block busy | clear | masked off | no |
 | 26 | `GA_BUSY` | block busy | set under load | `pa` | yes |
 | 27 | `CBA2D_BUSY` | block busy | clear | `rb2d` | on assertion |

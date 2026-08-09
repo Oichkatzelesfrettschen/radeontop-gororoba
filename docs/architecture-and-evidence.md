@@ -86,10 +86,10 @@ the list deliberately.
 
 `UNKNOWN_CHIP`, negative enum values, the terminal family sentinel, and values
 above the sentinel have no layout. The classifier rejects them before an
-effective-UID transition, `open`, or `mmap` occurs. An unknown AMD display
-device inherits neither an R600 GRBM layout nor generic R600 masks. Process
-startup also rejects an unknown family before `initbits`, so a DRM register
-reader cannot expose a generic gauge map for an unclassified PCI ID.
+effective-UID transition, PCI resource open, or `mmap` occurs. An unknown AMD
+display device inherits neither an R600 GRBM layout nor generic R600 masks.
+Process startup also rejects an unknown family before `initbits`, so a DRM
+register reader cannot expose a generic gauge map for an unclassified PCI ID.
 
 An explicit DRM path establishes an exact BDF through `drmGetDevice2`, or
 through the canonical `drmGetBusid` PCI string on the older-libdrm lane. The PCI
@@ -123,8 +123,9 @@ The radeon kernel ABI reports `RADEON_INFO_CURRENT_GPU_SCLK` and
 `RADEON_INFO_CURRENT_GPU_MCLK` in megahertz in
 `drivers/gpu/drm/radeon/radeon_kms.c`. RadeonTop stores clock samples and maxima
 in kilohertz. `radeon_clock_mhz_to_khz` performs the checked conversion before a
-current-clock value enters the collector. `RADEON_INFO_MAX_SCLK` already uses
-kilohertz. RS480 has a fixed memory clock, so its current value seeds `mclk_max`
+current-clock value enters the collector. `RADEON_INFO_MAX_SCLK` multiplies the
+kernel's internal 10-kilohertz value by 10 and therefore already uses kilohertz.
+RS480 has a fixed memory clock, so its current value seeds `mclk_max`
 in the same unit that later samples use. R600+ dynamic-clock parts retain the
 absolute sample and leave the unavailable maximum at zero, which suppresses an
 unsupported percentage instead of naming an idle sample as the maximum.
@@ -199,7 +200,7 @@ fixed workload phase, but scheduler delay preferentially removes late-slot
 phases. Coverage measures the amount of missingness; it does not prove that
 accepted phases remain representative. The missing-data interval protects the
 reported duty against arbitrary missing state. A future phase-inclusion model
-still needs attempted and accepted phase histograms before a narrower dithered
+requires attempted and accepted phase histograms before a narrower dithered
 estimate earns support.
 
 The rational grid contains slots of `floor(10^9/ticks)` or
@@ -209,12 +210,12 @@ removes the modulo bias present when the slot width does not divide `2^64`.
 
 ## Capture format and provenance
 
-Every dump run begins with one line whose prefix is
+Every accepted dump run begins with one line whose prefix is
 `# radeontop_capture_v1 `. The remainder is JSON and carries:
 
 - a fresh run UUID from `/proc/sys/kernel/random/uuid`;
 - the boot UUID from `/proc/sys/kernel/random/boot_id`;
-- readable version, one clean 40-hex source commit, production-source manifest
+- readable version, one clean 40- or 64-hex source commit, production-source manifest
   and SHA-256, build manifest and SHA-256, and kernel release;
 - realtime and monotonic start stamps;
 - source and build manifest byte strings with `byte-u00xx` encoding;
@@ -222,6 +223,11 @@ Every dump run begins with one line whose prefix is
 - PCI BDF, vendor ID, device ID, family, DRM driver, and DRM version;
 - status source, register name and offset, resource index, and resource size;
 - ticks, window duration, dither seed, memory sizes, and clock maxima.
+
+Argument validation precedes dump setup, so a rejected invocation emits no
+capture stream. The boot UUID links captures produced during one host boot; a
+published header therefore discloses a host-linkable identifier that remains
+stable for that boot's lifetime.
 
 The source manifest is the sorted `sha256sum` preimage for every production
 input. The build manifest records its schema, source identity, and the exact
@@ -279,7 +285,8 @@ The bundle contains:
 - repository commit, branch, and worktree status;
 - cflow runtime forward, reverse, DOT, and SVG call graphs;
 - per-test forward and reverse cflow trees and graphs that include every
-  production translation unit linked by the corresponding Makefile rule;
+  production translation unit compiled separately or textually included by the
+  corresponding harness;
 - cscope, Universal Ctags, and GNU Global databases;
 - known-good `main` and known-bad missing-symbol calibration results;
 - compiler include dependencies as Make syntax, DOT, and SVG;
@@ -287,10 +294,12 @@ The bundle contains:
 - lizard and scc complexity inventories;
 - exact tool versions and a final internally verified `SHA256SUMS` manifest.
 
-Universal Ctags 6.2.1 emits a Cargo/TOML parser warning at startup even under
-`--options=NONE --languages=C`. The script retains that diagnostic in
-`ctags.stderr`; the positive and negative symbol calibrations determine whether
-the C index is usable.
+Universal Ctags 6.2.1 emits one options notice and two Cargo/TOML parser warnings
+at startup even under `--options=NONE --languages=C`. The script accepts only
+lines from that explained diagnostic set or empty stderr, rejects duplicates and
+every other diagnostic, and retains the original bytes in `ctags.stderr`.
+Positive and negative symbol calibrations separately determine whether the C
+index is usable.
 
 These products prove lexical structure and indexed reachability. They do not
 prove a preprocessor variant, runtime callback selection, a successful build,

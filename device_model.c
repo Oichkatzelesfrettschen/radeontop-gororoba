@@ -23,7 +23,7 @@ void radeon_device_identity_init(struct radeon_device_identity *identity) {
 	memset(identity, 0, sizeof(*identity));
 	identity->family = UNKNOWN_CHIP;
 	identity->status_source = RADEON_STATUS_UNAVAILABLE;
-	identity->resource_index = -1;
+	identity->resource_index = RADEON_PCI_RESOURCE_NONE;
 }
 
 bool radeon_mmio_layout_for_family(enum radeon_family family,
@@ -31,6 +31,7 @@ bool radeon_mmio_layout_for_family(enum radeon_family family,
 	struct radeon_mmio_layout selected;
 
 	memset(&selected, 0, sizeof(selected));
+	selected.resource_index = RADEON_PCI_RESOURCE_NONE;
 
 	// Every admitted family appears as a case.  An enum range silently grants a
 	// newly inserted family an inherited BAR layout before its PCI aperture has
@@ -115,10 +116,13 @@ bool radeon_mmio_layout_for_family(enum radeon_family family,
 
 		case UNKNOWN_CHIP:
 		case RADEON_FAMILY_COUNT:
-		default:
-			if (layout)
-				*layout = selected;
-			return false;
+			break;
+	}
+
+	if (selected.status_source == RADEON_STATUS_UNAVAILABLE) {
+		if (layout)
+			*layout = selected;
+		return false;
 	}
 
 	if (layout)

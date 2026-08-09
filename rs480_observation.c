@@ -56,8 +56,12 @@ static bool parse_value(const char *line, const char *key, uint32_t *out) {
 
 	errno = 0;
 	value = strtoul(cursor, &end, 0);
-	if (errno || end == cursor || value > UINT32_MAX)
+	if (errno || end == cursor)
 		return false;
+#if ULONG_MAX > UINT32_MAX
+	if (value > UINT32_MAX)
+		return false;
+#endif
 
 	while (*end && isspace((unsigned char) *end))
 		end++;

@@ -59,7 +59,7 @@ restate one asks for a narrower contract or evidence class.
   approximation of the language and include flags. The command-database row
   below remains the gate that makes editor and build preprocessing identical.
 - Direct MMIO uses a pure family classifier. Unknown and out-of-range families
-  have no BAR layout and stop before privilege elevation, resource open, or
+  have no BAR layout and stop before privilege elevation, PCI resource open, or
   mapping. The process elevates only for the validated resource mapping and
   optional RS480 debugfs intake, then removes the saved identity before
   collection.
@@ -67,7 +67,7 @@ restate one asks for a narrower contract or evidence class.
   collector's kilohertz unit with overflow checks. Only fixed-clock RS480
   derives a memory-clock maximum from a current sample. The amdgpu path checks
   and initializes GPU information before reading clock limits or APU flags.
-- Dump runs accept one clean 40-hex commit and bind version, source state,
+- Dump runs accept one clean 40- or 64-hex commit and bind version, source state,
   source manifest and digest, build manifest and digest, boot, device, and
   command bytes in a versioned JSON header. Each evidence
   object repeats the run UUID and distinguishes support, failure, clock means,
@@ -197,8 +197,9 @@ returned.
   schedule. Worst costs per pass run 341 to 913 microseconds across 1000, 2000,
   4000, and 8000 samples per second, seeded and unseeded alike, against typical
   costs under 60. An unretained reading that paired a 588 microsecond cost with a
-  seeded pass reflects that tail rather than the dither, which changes when a
-  sample is taken and not how long the load takes.
+  seeded pass is consistent with that tail rather than the dither, which changes
+  when a sample is taken and not how long the load takes. No retained artifact
+  tests the cause of that individual reading.
 - At 4000 samples per second, a 250 microsecond period, 4 of 5 unseeded windows
   and 2 of 5 seeded windows report a read cost above their own period, so the
   post-read deadline skip fires on silicon rather than under the virtual clock

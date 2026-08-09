@@ -16,14 +16,17 @@
 
 #include "capture.h"
 
+#include <limits.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 static unsigned int checks;
 static unsigned int failures;
+static unsigned int skips;
 static const char source_manifest_fixture[] = "source-fixture\n";
 static const char build_manifest_fixture[] = "build-fixture\n";
 static const char source_manifest_fixture_sha256[] =
@@ -51,6 +54,41 @@ static bool read_stream(FILE *stream, char *buffer, size_t size) {
 		return false;
 	buffer[length] = '\0';
 	return true;
+}
+
+static bool fixture_directory_usable(const char *directory) {
+	struct stat status;
+
+	return directory && directory[0] && !stat(directory, &status) &&
+		S_ISDIR(status.st_mode) && !access(directory, W_OK | X_OK);
+}
+
+static int create_temporary_capture_file(char path[PATH_MAX]) {
+	const char *directories[] = { getenv("TMPDIR"), "/tmp" };
+
+	for (size_t index = 0; index < sizeof(directories) / sizeof(directories[0]);
+		index++) {
+		int path_length;
+
+		if (!fixture_directory_usable(directories[index]))
+			continue;
+		if (index && directories[0] &&
+			!strcmp(directories[0], directories[index]))
+			continue;
+
+		path_length = snprintf(path, PATH_MAX,
+			"%s/radeontop-capture-lock.XXXXXX", directories[index]);
+		if (path_length <= 0 || path_length >= PATH_MAX)
+			continue;
+		{
+			const int descriptor = mkstemp(path);
+
+			if (descriptor >= 0)
+				return descriptor;
+		}
+	}
+
+	return -1;
 }
 
 static void check_header(void) {
@@ -202,8 +240,8 @@ static void check_snapshot_evidence(void) {
 }
 
 static void check_exclusive_stream_lock(void) {
-	char path[] = "/tmp/radeontop-capture-lock.XXXXXX";
-	int descriptor = mkstemp(path);
+	char path[PATH_MAX];
+	const int descriptor = create_temporary_capture_file(path);
 	FILE *first;
 	pid_t child;
 	int child_status = 0;
@@ -276,7 +314,7 @@ static int emit_json_fixture(void) {
 	metadata.argc = 4;
 	metadata.argv = arguments;
 	metadata.identity.family = RS480;
-	metadata.identity.resource_index = -1;
+	metadata.identity.resource_index = RADEON_PCI_RESOURCE_NONE;
 
 	memset(&snapshot, 0, sizeof(snapshot));
 	memset(&masks, 0, sizeof(masks));
@@ -323,6 +361,16 @@ static void check_system_metadata(void) {
 		.build_manifest = build_manifest_fixture
 	};
 	const struct collector_config config = { 120, 1, 0 };
+	static const char sha256_commit[] =
+		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+	if (access("/proc/sys/kernel/random/uuid", R_OK) ||
+		access("/proc/sys/kernel/random/boot_id", R_OK)) {
+		fputs("SKIP system metadata: /proc UUID sources are unavailable\n",
+			stderr);
+		skips++;
+		return;
+	}
 
 	radeon_device_identity_init(&identity);
 	CHECK(radeontop_capture_metadata_init(&metadata, &build_identity, "RS480",
@@ -358,6 +406,11 @@ static void check_system_metadata(void) {
 		CHECK(radeontop_capture_metadata_init(&metadata, &invalid_identity,
 			"RS480", 3, argv, &identity, &config, 0, 0, 0, 0) != 0);
 		invalid_identity = build_identity;
+		invalid_identity.source_commit = sha256_commit;
+		CHECK(radeontop_capture_metadata_init(&metadata, &invalid_identity,
+			"RS480", 3, argv, &identity, &config, 0, 0, 0, 0) == 0);
+		CHECK(!strcmp(metadata.source_commit, sha256_commit));
+		invalid_identity = build_identity;
 		invalid_identity.source_manifest = NULL;
 		CHECK(radeontop_capture_metadata_init(&metadata, &invalid_identity,
 			"RS480", 3, argv, &identity, &config, 0, 0, 0, 0) != 0);
@@ -387,6 +440,7 @@ int main(int argc, char **argv) {
 	CHECK(radeontop_capture_write_snapshot_evidence(NULL, NULL, NULL, NULL) != 0);
 	CHECK(radeontop_capture_write_run_end(NULL, NULL, NULL, 1, 0, 0, NULL) != 0);
 
-	printf("capture: %u checks, %u failed\n", checks, failures);
+	printf("capture: %u checks, %u failed, %u skipped\n",
+		checks, failures, skips);
 	return failures ? 1 : 0;
 }

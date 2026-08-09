@@ -51,6 +51,8 @@ def main() -> int:
     run_end = json.loads(lines[2][len(end_prefix) :])
 
     require(header["build"]["source_state"] == "clean", "source state")
+    require(len(header["build"]["source_commit"]) in (40, 64),
+            "Git object ID width")
     require(len(header["build"]["source_sha256"]) == 64, "source digest")
     require(len(header["build"]["manifest_sha256"]) == 64, "build digest")
     require(header["build"]["source_manifest_encoding"] == "byte-u00xx",

@@ -1170,6 +1170,7 @@ static void case_contiguous_wait_detects_lost_window(void) {
 	CHECK_U64(snapshot.generation, 3);
 	CHECK(collector_wait_next_contiguous(&harness.collector, UINT64_MAX,
 		NULL, &snapshot) == COLLECTOR_WAIT_GAP);
+	CHECK_U64(snapshot.generation, 3);
 
 	harness_stop(&harness);
 	harness_destroy(&harness);
@@ -1452,6 +1453,7 @@ static void case_consumer_wait_error_is_reported(void) {
 	struct collector collector;
 	struct engine_masks masks;
 	struct collector_snapshot snapshot;
+	struct collector_snapshot unchanged;
 	struct timespec invalid_deadline = { 0, NS_PER_SEC };
 	const struct collector_config config = { 10, 1, 0 };
 
@@ -1469,8 +1471,11 @@ static void case_consumer_wait_error_is_reported(void) {
 			&clock_ops) == 0);
 	}
 
+	memset(&snapshot, 0xa5, sizeof(snapshot));
+	unchanged = snapshot;
 	CHECK(collector_wait_next(&collector, 0, &invalid_deadline,
 		&snapshot) == COLLECTOR_WAIT_ERROR);
+	CHECK(!memcmp(&snapshot, &unchanged, sizeof(snapshot)));
 	collector_destroy(&collector);
 	fake_clock_destroy(&clock);
 	fake_backend_destroy(&backend);
