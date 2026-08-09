@@ -71,6 +71,7 @@ static void set_pci_identity(struct radeon_device_identity *identity,
 
 static int find_pci(short bus, struct radeon_device_identity *identity) {
 	const bool bind_existing_identity = identity->pci_address_valid;
+	bool found = false;
 	int ret = pci_system_init();
 	if (ret)
 		die(_("Failed to init pciaccess"));
@@ -107,24 +108,30 @@ static int find_pci(short bus, struct radeon_device_identity *identity) {
 		if (!bind_existing_identity && bus >= 0 && bus != dev->bus)
 			continue;
 		{
+			struct radeon_device_identity candidate = *identity;
 			struct radeon_mmio_layout layout;
 
-			set_pci_identity(identity, dev->domain_16, dev->bus, dev->dev,
+			set_pci_identity(&candidate, dev->domain_16, dev->bus, dev->dev,
 				dev->func, dev->vendor_id, dev->device_id);
 
-			if (radeon_mmio_layout_for_family(identity->family, &layout)) {
+			if (!radeon_mmio_layout_for_family(candidate.family, &layout)) {
+				if (!bind_existing_identity)
+					continue;
+			} else {
 				if (!pci_resource_index_valid(layout.resource_index))
 					die(_("The family classifier returned an invalid PCI resource index"));
-				identity->resource_index = layout.resource_index;
-				identity->resource_size = dev->regions[layout.resource_index].size;
+				candidate.resource_index = layout.resource_index;
+				candidate.resource_size = dev->regions[layout.resource_index].size;
 			}
+			*identity = candidate;
+			found = true;
 			break;
 		}
 	}
 
 	pci_iterator_destroy(iter);
 	pci_system_cleanup();
-	return (dev == NULL);
+	return found ? 0 : 1;
 }
 
 // A register load reaches the device on every call.  The volatile qualifier is
@@ -499,23 +506,26 @@ static int find_drm(short bus, struct radeon_device_identity *identity) {
 	}
 
 	for (i = 0; i < count; i++) {
+		struct radeon_device_identity discovered = *identity;
+
 		if (devs[i]->bustype != DRM_BUS_PCI ||
 			devs[i]->deviceinfo.pci->vendor_id != VENDOR_AMD ||
 			(bus >= 0 && bus != devs[i]->businfo.pci->bus))
 			continue;
+		set_pci_identity(&discovered, devs[i]->businfo.pci->domain,
+			devs[i]->businfo.pci->bus, devs[i]->businfo.pci->dev,
+			devs[i]->businfo.pci->func,
+			devs[i]->deviceinfo.pci->vendor_id,
+			devs[i]->deviceinfo.pci->device_id);
+		if (discovered.family == UNKNOWN_CHIP)
+			continue;
 
 		// try render node first, as it does not require to drop master
 		for (j = DRM_NODE_MAX - 1; j >= 0; j--) {
-			struct radeon_device_identity candidate = *identity;
+			struct radeon_device_identity candidate = discovered;
 
 			if (!(1 << j & devs[i]->available_nodes))
 				continue;
-
-			set_pci_identity(&candidate, devs[i]->businfo.pci->domain,
-				devs[i]->businfo.pci->bus, devs[i]->businfo.pci->dev,
-				devs[i]->businfo.pci->func,
-				devs[i]->deviceinfo.pci->vendor_id,
-				devs[i]->deviceinfo.pci->device_id);
 
 			if (open_drm_path(devs[i]->nodes[j], &candidate, false) !=
 				DRM_OPEN_BACKEND_READY)

@@ -33,10 +33,14 @@ static void *test_mmap(void *address, size_t length, int protection,
 static int test_munmap(void *address, size_t length);
 
 // The test compiles the real selection unit with only its operating-system
-// boundaries replaced.  Omitting DRM_BUS_PCI selects the legacy bus-ID lane,
-// which is the compatibility path used when drmGetDevice is unavailable.
+// boundaries replaced.  The default binary selects the legacy bus-ID lane,
+// while TEST_DRM_BUS_DISCOVERY selects modern device enumeration.
+#ifdef TEST_DRM_BUS_DISCOVERY
+#define HAS_DRMGETDEVICE 1
+#else
 #undef DRM_BUS_PCI
 #undef HAS_DRMGETDEVICE
+#endif
 #undef ENABLE_AMDGPU
 #define open test_open
 #define close test_close
@@ -51,6 +55,8 @@ static int test_munmap(void *address, size_t length);
 static unsigned int checks;
 static unsigned int failures;
 static unsigned int explicit_open_count;
+static unsigned int unknown_drm_node_open_count;
+static unsigned int supported_drm_node_open_count;
 static unsigned int resource_open_count;
 static unsigned int close_count;
 static unsigned int drm_open_count;
@@ -61,11 +67,26 @@ static unsigned int privilege_drop_count;
 static unsigned int unmap_count;
 static bool drm_bus_open_succeeds;
 static bool drm_driver_is_radeon;
-static bool iterator_has_device;
+static size_t iterator_device_count;
+static size_t iterator_device_index;
 static unsigned char iterator_token;
 static uint32_t srbm_window[SRBM_MMAP_SIZE / sizeof(uint32_t)];
 static uint32_t grbm_window[MMAP_SIZE / sizeof(uint32_t)];
 static struct pci_device selected_device;
+static struct pci_device iterator_devices[2];
+
+#ifdef TEST_DRM_BUS_DISCOVERY
+static drmPciBusInfo unknown_drm_bus_info;
+static drmPciBusInfo supported_drm_bus_info;
+static drmPciDeviceInfo unknown_drm_device_info;
+static drmPciDeviceInfo supported_drm_device_info;
+static char *unknown_drm_nodes[DRM_NODE_MAX];
+static char *supported_drm_nodes[DRM_NODE_MAX];
+static drmDevice unknown_drm_device;
+static drmDevice supported_drm_device;
+static drmDevicePtr enumerated_drm_devices[2];
+static int enumerated_drm_device_count;
+#endif
 
 #define CHECK(condition) do { \
 	checks++; \
@@ -89,6 +110,14 @@ static int test_open(const char *path, int flags, ...) {
 		explicit_open_count++;
 		return 10;
 	}
+	if (!strcmp(path, "/dev/dri/unknown")) {
+		unknown_drm_node_open_count++;
+		return 12;
+	}
+	if (!strcmp(path, "/dev/dri/supported")) {
+		supported_drm_node_open_count++;
+		return 10;
+	}
 	if (!strcmp(path,
 		"/sys/bus/pci/devices/0000:01:00.0/resource5")) {
 		resource_open_count++;
@@ -100,7 +129,7 @@ static int test_open(const char *path, int flags, ...) {
 }
 
 static int test_close(int fd) {
-	CHECK(fd == 10 || fd == 11);
+	CHECK(fd == 10 || fd == 11 || fd == 12);
 	close_count++;
 	return 0;
 }
@@ -137,7 +166,7 @@ drmVersionPtr drmGetVersion(int fd) {
 		.name = amdgpu_driver_name
 	};
 
-	CHECK(fd == 10);
+	CHECK(fd == 10 || fd == 12);
 	version.name = drm_driver_is_radeon ? radeon_driver_name :
 		amdgpu_driver_name;
 	version.name_len = strlen(version.name);
@@ -178,28 +207,143 @@ struct pci_device *pci_device_find_by_slot(uint32_t domain, uint32_t bus,
 }
 
 int pci_device_probe(struct pci_device *device) {
-	CHECK(device == &selected_device);
+	bool fixture_device = device == &selected_device;
+	size_t device_index;
+
+	for (device_index = 0; device_index < iterator_device_count; device_index++) {
+		if (device == &iterator_devices[device_index])
+			fixture_device = true;
+	}
+	CHECK(fixture_device);
 	return 0;
 }
 
 struct pci_device_iterator *pci_id_match_iterator_create(
 		const struct pci_id_match *match) {
 	CHECK(match->vendor_id == VENDOR_AMD);
-	iterator_has_device = true;
+	iterator_device_index = 0;
 	return (struct pci_device_iterator *) &iterator_token;
 }
 
 struct pci_device *pci_device_next(struct pci_device_iterator *iterator) {
 	CHECK(iterator == (struct pci_device_iterator *) &iterator_token);
-	if (!iterator_has_device)
+	if (iterator_device_index >= iterator_device_count)
 		return NULL;
-	iterator_has_device = false;
-	return &selected_device;
+	return &iterator_devices[iterator_device_index++];
 }
 
 void pci_iterator_destroy(struct pci_device_iterator *iterator) {
 	CHECK(iterator == (struct pci_device_iterator *) &iterator_token);
 }
+
+#ifndef TEST_DRM_BUS_DISCOVERY
+static void initialize_pci_device(struct pci_device *device, uint8_t pci_device,
+		uint16_t device_id) {
+	memset(device, 0, sizeof(*device));
+	device->domain_16 = 0;
+	device->bus = 1;
+	device->dev = pci_device;
+	device->func = 0;
+	device->vendor_id = VENDOR_AMD;
+	device->device_id = device_id;
+	device->device_class = 0x00030000;
+	device->regions[5].size = 0x10000;
+}
+
+static void configure_pci_iterator(bool include_supported) {
+	initialize_pci_device(&iterator_devices[0], 1, 0xffff);
+	iterator_device_count = 1;
+	if (include_supported) {
+		iterator_devices[1] = selected_device;
+		iterator_device_count = 2;
+	}
+}
+#endif
+
+#ifdef TEST_DRM_BUS_DISCOVERY
+int drmError(int error, const char *label) {
+	(void) error;
+	(void) label;
+	CHECK(false);
+	return -1;
+}
+
+int drmGetDevice2(int fd, uint32_t flags, drmDevicePtr *device) {
+	CHECK(flags == 0);
+	CHECK(device != NULL);
+	if (fd == 10) {
+		*device = &supported_drm_device;
+		return 0;
+	}
+	if (fd == 12) {
+		*device = &unknown_drm_device;
+		return 0;
+	}
+	return -EINVAL;
+}
+
+void drmFreeDevice(drmDevicePtr *device) {
+	CHECK(device != NULL && *device != NULL);
+	*device = NULL;
+}
+
+int drmGetDevices2(uint32_t flags, drmDevicePtr devices[], int max_devices) {
+	int device_index;
+
+	CHECK(flags == 0);
+	if (!devices)
+		return enumerated_drm_device_count;
+	CHECK(max_devices >= enumerated_drm_device_count);
+	for (device_index = 0; device_index < enumerated_drm_device_count;
+			device_index++)
+		devices[device_index] = enumerated_drm_devices[device_index];
+	return enumerated_drm_device_count;
+}
+
+void drmFreeDevices(drmDevicePtr devices[], int count) {
+	CHECK(devices != NULL);
+	CHECK(count == enumerated_drm_device_count);
+}
+
+static void configure_drm_devices(bool include_supported) {
+	memset(&unknown_drm_device, 0, sizeof(unknown_drm_device));
+	memset(&supported_drm_device, 0, sizeof(supported_drm_device));
+	memset(unknown_drm_nodes, 0, sizeof(unknown_drm_nodes));
+	memset(supported_drm_nodes, 0, sizeof(supported_drm_nodes));
+
+	unknown_drm_bus_info = (drmPciBusInfo) {
+		.domain = 0, .bus = 1, .dev = 1, .func = 0
+	};
+	supported_drm_bus_info = (drmPciBusInfo) {
+		.domain = 0, .bus = 1, .dev = 0, .func = 0
+	};
+	unknown_drm_device_info = (drmPciDeviceInfo) {
+		.vendor_id = VENDOR_AMD, .device_id = 0xffff
+	};
+	supported_drm_device_info = (drmPciDeviceInfo) {
+		.vendor_id = VENDOR_AMD, .device_id = 0x6650
+	};
+	unknown_drm_nodes[DRM_NODE_RENDER] = "/dev/dri/unknown";
+	supported_drm_nodes[DRM_NODE_RENDER] = "/dev/dri/supported";
+	unknown_drm_device.nodes = unknown_drm_nodes;
+	unknown_drm_device.available_nodes = 1 << DRM_NODE_RENDER;
+	unknown_drm_device.bustype = DRM_BUS_PCI;
+	unknown_drm_device.businfo.pci = &unknown_drm_bus_info;
+	unknown_drm_device.deviceinfo.pci = &unknown_drm_device_info;
+	supported_drm_device.nodes = supported_drm_nodes;
+	supported_drm_device.available_nodes = 1 << DRM_NODE_RENDER;
+	supported_drm_device.bustype = DRM_BUS_PCI;
+	supported_drm_device.businfo.pci = &supported_drm_bus_info;
+	supported_drm_device.deviceinfo.pci = &supported_drm_device_info;
+
+	enumerated_drm_devices[0] = &unknown_drm_device;
+	enumerated_drm_device_count = 1;
+	if (include_supported) {
+		enumerated_drm_devices[1] = &supported_drm_device;
+		enumerated_drm_device_count = 2;
+	}
+}
+#endif
 
 void authenticate_drm(int fd) {
 	(void) fd;
@@ -230,20 +374,14 @@ __attribute__((noreturn)) void die(const char *why) {
 	exit(2);
 }
 
+#ifndef TEST_DRM_BUS_DISCOVERY
 int main(void) {
 	struct radeon_device_identity identity;
 	short bus = -1;
 	uint32_t status = 0;
 
-	memset(&selected_device, 0, sizeof(selected_device));
-	selected_device.domain_16 = 0;
-	selected_device.bus = 1;
-	selected_device.dev = 0;
-	selected_device.func = 0;
-	selected_device.vendor_id = VENDOR_AMD;
-	selected_device.device_id = 0x6650;
-	selected_device.device_class = 0x00030000;
-	selected_device.regions[5].size = 0x10000;
+	initialize_pci_device(&selected_device, 0, 0x6650);
+	configure_pci_iterator(true);
 	grbm_window[(GRBM_STATUS - GRBM_MMAP_BASE) / sizeof(uint32_t)] =
 		UINT32_C(0xdeadbeef);
 
@@ -316,6 +454,59 @@ int main(void) {
 	CHECK(close_count == 4);
 	CHECK(unmap_count == 4);
 
+	configure_pci_iterator(false);
+	radeon_device_identity_init(&identity);
+	CHECK(find_pci(-1, &identity) == 1);
+	CHECK(!identity.pci_address_valid);
+	CHECK(identity.family == UNKNOWN_CHIP);
+	CHECK(resource_open_count == 2);
+	CHECK(privilege_raise_count == 2);
+	CHECK(privilege_drop_count == 2);
+
 	printf("detect path: %u checks, %u failed\n", checks, failures);
 	return failures ? 1 : 0;
 }
+#else
+int main(void) {
+	struct radeon_device_identity identity;
+	unsigned int supported_opens_before_unknown_only;
+
+	drm_driver_is_radeon = true;
+	configure_drm_devices(true);
+	radeon_device_identity_init(&identity);
+	getgrbm = getsclk = getmclk = getuint32_null;
+	getsrbm = getsrbm2 = getuint32_null;
+	getvram = getgtt = getuint64_null;
+
+	CHECK(find_drm(-1, &identity) == 0);
+	CHECK(identity.pci_address_valid);
+	CHECK(identity.domain == 0 && identity.bus == 1 &&
+		identity.device == 0 && identity.function == 0);
+	CHECK(identity.vendor_id == VENDOR_AMD);
+	CHECK(identity.device_id == 0x6650);
+	CHECK(identity.family == BONAIRE);
+	CHECK(!strcmp(identity.drm_driver, "radeon"));
+	CHECK(identity.status_source == RADEON_STATUS_RADEON_READ_REG);
+	CHECK(active_drm_fd == 10);
+	CHECK(unknown_drm_node_open_count == 0);
+	CHECK(supported_drm_node_open_count == 1);
+	cleanup();
+
+	supported_opens_before_unknown_only = supported_drm_node_open_count;
+	configure_drm_devices(false);
+	radeon_device_identity_init(&identity);
+	getgrbm = getsclk = getmclk = getuint32_null;
+	getsrbm = getsrbm2 = getuint32_null;
+	getvram = getgtt = getuint64_null;
+	CHECK(find_drm(-1, &identity) == 1);
+	CHECK(!identity.pci_address_valid);
+	CHECK(identity.family == UNKNOWN_CHIP);
+	CHECK(active_drm_fd == -1);
+	CHECK(unknown_drm_node_open_count == 0);
+	CHECK(supported_drm_node_open_count ==
+		supported_opens_before_unknown_only);
+
+	printf("detect DRM discovery: %u checks, %u failed\n", checks, failures);
+	return failures ? 1 : 0;
+}
+#endif

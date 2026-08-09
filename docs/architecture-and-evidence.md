@@ -12,7 +12,7 @@ supportable.
 | Component | State or mechanism | Direct consumers | Validation surface |
 |---|---|---|---|
 | `device_model.c` | Family-to-register layout, device identity, clock-unit conversion | detection, capture, radeon backend | `tests/device_model_test.c` |
-| `detect.c` | DRM discovery, PCI discovery, MMIO admission, mapping, reader binding | process entry, backend adapter | `tests/detect_path_test.c`, compiler matrix, family check, target run |
+| `detect.c` | DRM discovery, PCI discovery, MMIO admission, mapping, reader binding | process entry, backend adapter | `tests/detect_path_test.c` legacy and modern enumeration variants, compiler matrix, family check, target run |
 | `privileges.c` | Effective-UID entry and exit, permanent UID drop | process entry, direct MMIO setup | `tests/privileges_test.c` plus setuid target run |
 | `radeon.c` | Radeon ioctl readers and kHz normalization | backend adapter | compiler matrix, unavailable-family runtime gate |
 | `amdgpu.c` | libdrm_amdgpu readers and limits | backend adapter | compiler matrix, unavailable-family runtime gate |
@@ -90,11 +90,13 @@ the list deliberately.
 | `BONAIRE` through `BEIGE_GOBY` | 5 | `GRBM_STATUS` at `0x00008010` | `pci-resource-grbm-status` |
 
 `UNKNOWN_CHIP`, negative enum values, the terminal family sentinel, and values
-above the sentinel have no layout. The classifier rejects them before an
-effective-UID elevation, PCI resource open, or `mmap` occurs. An unknown AMD
-display device inherits neither an R600 GRBM layout nor generic R600 masks.
-Process startup also rejects an unknown family before `initbits`, so a DRM
-register reader cannot expose a generic gauge map for an unclassified PCI ID.
+above the sentinel have no layout. Automatic PCI and DRM enumeration skip an
+unknown AMD display device and continue to the first supported candidate. An
+explicit path retains its exact BDF, and its unknown ID fails before an
+effective-UID elevation, PCI resource open, or `mmap` occurs. An unknown device
+inherits neither an R600 GRBM layout nor generic R600 masks. Process startup
+also rejects an unknown family before `initbits`, so a DRM register reader
+cannot expose a generic gauge map for an unclassified PCI ID.
 
 An explicit DRM path establishes an exact BDF through `drmGetDevice2`, or
 through the canonical `drmGetBusid` PCI string on the older-libdrm lane. The PCI

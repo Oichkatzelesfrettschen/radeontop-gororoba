@@ -82,6 +82,14 @@ for test_source in "$repo_root"/tests/*.c; do
 	done
 done
 
+for required_path in tests/detect_path_test.c detect.c; do
+	if ! rule_has_prerequisite "$make_database" \
+			tests/detect_drm_discovery_test "$required_path"; then
+		echo "tests/detect_drm_discovery_test omits $required_path from its prerequisites" >&2
+		exit 1
+	fi
+done
+
 if [ "$textual_include_count" -eq 0 ]; then
 	echo "no textual production includes entered the dependency denominator" >&2
 	exit 1

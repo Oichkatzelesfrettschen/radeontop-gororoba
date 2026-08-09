@@ -15,6 +15,7 @@ radeontop-source-export.mk
 *.pkg.tar.*
 tests/collector_test
 tests/capture_test
+tests/detect_drm_discovery_test
 tests/detect_path_test
 tests/device_model_test
 tests/privileges_test

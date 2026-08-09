@@ -32,7 +32,9 @@ installs mode `0755`; deployment policy owns any setuid mode.
 
 ## Running
 
-RadeonTop selects the first supported GPU:
+Automatic discovery skips unknown AMD PCI IDs and selects the first supported
+GPU. An explicit DRM path remains bound to its exact PCI device, and an unknown
+explicit ID fails instead of selecting another GPU:
 
 ```sh
 ./radeontop

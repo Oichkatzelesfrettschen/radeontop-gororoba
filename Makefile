@@ -149,14 +149,16 @@ $(bin): $(obj)
 # so they build without ncurses, libdrm, libpciaccess, or a GPU.  Their flags
 # stay separate from CFLAGS so a sanitizer lane can rebuild them without
 # disturbing the production build.
-tests = tests/capture_test tests/collector_test tests/detect_path_test \
-	tests/device_model_test tests/privileges_test tests/rs480_observation_test
+tests = tests/capture_test tests/collector_test tests/detect_drm_discovery_test \
+	tests/detect_path_test tests/device_model_test tests/privileges_test \
+	tests/rs480_observation_test
 TEST_CFLAGS ?= -std=gnu11 -O1 -g -Wall -Wextra -Werror
 
 check: $(tests)
 	./tests/capture_test
 	$(PYTHON) ./tests/capture_json_test.py ./tests/capture_test
 	./tests/collector_test
+	./tests/detect_drm_discovery_test
 	./tests/detect_path_test
 	./tests/device_model_test
 	./tests/privileges_test
@@ -190,6 +192,14 @@ tests/detect_path_test: tests/detect_path_test.c detect.c device_model.c \
 		rs480_observation.c include/device_model.h include/radeontop.h \
 		include/rs480_observation.h $(verh)
 	$(CC) $(TEST_CFLAGS) $(CPPFLAGS) -Iinclude \
+		$(shell pkg-config --cflags libdrm pciaccess) \
+		-o $@ tests/detect_path_test.c device_model.c \
+		rs480_observation.c $(TEST_LDFLAGS)
+
+tests/detect_drm_discovery_test: tests/detect_path_test.c detect.c \
+		device_model.c rs480_observation.c include/device_model.h \
+		include/radeontop.h include/rs480_observation.h $(verh)
+	$(CC) $(TEST_CFLAGS) $(CPPFLAGS) -DTEST_DRM_BUS_DISCOVERY -Iinclude \
 		$(shell pkg-config --cflags libdrm pciaccess) \
 		-o $@ tests/detect_path_test.c device_model.c \
 		rs480_observation.c $(TEST_LDFLAGS)
