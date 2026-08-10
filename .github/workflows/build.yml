@@ -81,7 +81,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             pkgconf gettext libpciaccess-dev libdrm-dev \
             libncurses-dev libxcb1-dev libxcb-dri2-0-dev \
-            appstream clang cppcheck shellcheck
+            appstream clang cppcheck shellcheck sparse
 
       # -Wconditional-uninitialized reports a read that is defined on some paths
       # only.  It found the ticks.c uvd and vce reads that gcc at -Os did not.
@@ -99,6 +99,19 @@ jobs:
             --enable=warning,portability \
             --suppress=missingIncludeSystem \
             -Iinclude ./*.c
+
+      - name: Sparse external-symbol analysis
+        env:
+          CFLAGS: -O2 -Wall -Wextra -Werror -U_FORTIFY_SOURCE
+        run: |
+          make clean
+          make plain=1 CC=cgcc
+
+      - name: XCB helper ABI
+        run: |
+          readelf --dyn-syms --wide libradeontop_xcb.so |
+            awk '$8 == "authenticate_drm_xcb" { count++ }
+                 END { exit count != 1 }'
 
       - name: shellcheck
         run: shellcheck ./*.sh ./tools/*.sh

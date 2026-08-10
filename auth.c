@@ -17,6 +17,7 @@
 #include "radeontop.h"
 #include <xf86drm.h>
 #ifdef ENABLE_XCB
+#include "auth_xcb.h"
 #include <dlfcn.h>
 
 typedef void (*auth_magic_func)(drm_magic_t magic);
@@ -28,7 +29,7 @@ static void call_authenticate_drm_xcb(drm_magic_t magic) {
 	}
 
 	auth_magic_func func = (auth_magic_func) dlsym(handle,
-			"authenticate_drm_xcb");
+			RADEONTOP_XCB_AUTH_SYMBOL);
 	if (func) {
 		func(magic);
 	}

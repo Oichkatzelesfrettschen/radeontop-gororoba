@@ -61,11 +61,11 @@ msgstr ""
 msgid "Failed to get GTT usage"
 msgstr ""
 
-#: auth.c:50
+#: auth.c:51
 msgid "Failed to drop DRM master"
 msgstr ""
 
-#: auth.c:51
+#: auth.c:52
 #, c-format
 msgid ""
 "\n"
