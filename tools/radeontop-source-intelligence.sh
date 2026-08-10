@@ -688,15 +688,20 @@ for package in libdrm_amdgpu xcb xcb-dri2 ncursesw; do
 		compiler_flags="$compiler_flags $package_flags"
 	fi
 done
-# shellcheck disable=SC2086
 compiler_dependencies_raw=$output_dir/.compiler-dependencies.raw.tmp
+# compiler_flags contains the compiler arguments emitted by trusted pkg-config
+# modules and requires shell field splitting into separate argv elements.
+# shellcheck disable=SC2086
 cc -MM $compiler_flags "$@" > "$compiler_dependencies_raw"
 sed 's#\.\./generated/include/version\.h#include/version.h#g' \
 	"$compiler_dependencies_raw" > "$output_dir/compiler-dependencies.mk"
 rm -f "$compiler_dependencies_raw"
 compiler_dependencies_raw=
 grep -q 'include/version\.h' "$output_dir/compiler-dependencies.mk"
-! grep -q '\.\./generated/' "$output_dir/compiler-dependencies.mk"
+if grep -q '\.\./generated/' "$output_dir/compiler-dependencies.mk"; then
+	echo "compiler dependency normalization retains the generated overlay path" >&2
+	exit 1
+fi
 
 sed ':join
 /\\$/ {
