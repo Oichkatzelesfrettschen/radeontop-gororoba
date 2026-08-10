@@ -35,8 +35,8 @@ jobs:
           - lane: full
             options: nls=1 xcb=1 amdgpu=1
     steps:
-      # actions/checkout v4.4.0 supplies this immutable revision.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      # actions/checkout v7.0.1 supplies this immutable revision.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
 
@@ -72,8 +72,8 @@ jobs:
     name: static analysis
     runs-on: ubuntu-latest
     steps:
-      # actions/checkout v4.4.0 supplies this immutable revision.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      # actions/checkout v7.0.1 supplies this immutable revision.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
 
@@ -130,8 +130,8 @@ jobs:
     name: unit integrity
     runs-on: ubuntu-latest
     steps:
-      # actions/checkout v4.4.0 supplies this immutable revision.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      # actions/checkout v7.0.1 supplies this immutable revision.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
 
@@ -178,8 +178,8 @@ jobs:
     name: command-line contracts
     runs-on: ubuntu-latest
     steps:
-      # actions/checkout v4.4.0 supplies this immutable revision.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      # actions/checkout v7.0.1 supplies this immutable revision.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
 

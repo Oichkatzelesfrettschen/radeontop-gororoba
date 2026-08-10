@@ -36,8 +36,8 @@ jobs:
             git namcap \
             libpciaccess libdrm ncurses libxcb
 
-      # actions/checkout v4.4.0 supplies this immutable revision.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      # actions/checkout v7.0.1 supplies this immutable revision.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
           fetch-depth: 0
