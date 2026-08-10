@@ -15,6 +15,7 @@
 */
 
 #include "radeontop.h"
+#include <errno.h>
 #include <radeon_drm.h>
 #include <xf86drm.h>
 
@@ -49,9 +50,9 @@ static int getgrbm_radeon(uint32_t *out) {
 	// RADEON_INFO_READ_REG is gated per-asic by get_allowed_info_register.  For
 	// the whole pre-R600 family (r100..rs480 in radeon_asic.c) that callback is
 	// radeon_invalid_get_allowed_info_register, which returns -EINVAL for every
-	// register -- so this libdrm path binds only on R600+, where engine-busy is
+	// register -- so the libdrm path binds only on R600+, where engine-busy is
 	// GRBM_STATUS.  R300-class engine-busy (RBBM_STATUS) is read through the PCI
-	// BAR path (getgrbm_pci_r300) instead, never here.
+	// BAR path (getgrbm_pci_r300); getgrbm_radeon never handles it.
 	*out = GRBM_STATUS;
 	return radeon_get_drm_value(drm_fd, RADEON_INFO_READ_REG, out);
 }
@@ -66,12 +67,28 @@ static int getsrbm2_radeon(uint32_t *out) {
 	return radeon_get_drm_value(drm_fd, RADEON_INFO_READ_REG, out);
 }
 
+static int getclock_radeon(unsigned request, uint32_t *out) {
+	uint32_t mhz;
+	int result;
+
+	result = radeon_get_drm_value(drm_fd, request, &mhz);
+	if (result)
+		return result;
+
+	// The radeon kernel ABI returns CURRENT_GPU_SCLK and CURRENT_GPU_MCLK in
+	// megahertz.  The collector and the maximum-clock values use kilohertz.
+	if (!radeon_clock_mhz_to_khz(mhz, out))
+		return -ERANGE;
+
+	return 0;
+}
+
 static int getsclk_radeon(uint32_t *out) {
-	return radeon_get_drm_value(drm_fd, RADEON_INFO_CURRENT_GPU_SCLK, out);
+	return getclock_radeon(RADEON_INFO_CURRENT_GPU_SCLK, out);
 }
 
 static int getmclk_radeon(uint32_t *out) {
-	return radeon_get_drm_value(drm_fd, RADEON_INFO_CURRENT_GPU_MCLK, out);
+	return getclock_radeon(RADEON_INFO_CURRENT_GPU_MCLK, out);
 }
 #endif
 
@@ -124,18 +141,18 @@ void init_radeon(int fd, int drm_major, int drm_minor, int family) {
 
 		if (!(ret = getmclk_radeon(&out32))) {
 			getmclk = getmclk_radeon;
-			// radeon has no MAX_MCLK query.  On the fixed-clock
-			// pre-DPM parts the current memory clock IS the nominal
-			// one, so seed the maximum from the first sample; a zero
-			// maximum renders as a division-by-zero "inf%".  The
-			// ioctl reports megahertz, mclk_max holds kilohertz.
-			mclk_max = out32 * 1000;
+			// The radeon ABI has no MAX_MCLK query.  RS480 has a fixed
+			// memory clock, so its current value is also its nominal maximum.
+			// Dynamic-clock R600+ parts retain the absolute kHz sample while
+			// the unknown maximum stays zero and the percentage stays hidden.
+			if (family == RS480)
+				mclk_max = out32;
 		} else
 			drmError(ret, _("Failed to get memory clock"));
 	} else
-		fprintf(stderr, _("GPU usage reporting via libdrm is disabled (radeon kernel driver 2.42.0 required), attempting memory path\n"));
+		fputs(_("GPU usage reporting via libdrm is disabled (radeon kernel driver 2.42.0 required), attempting memory path\n"), stderr);
 #else
-	fprintf(stderr, _("GPU usage reporting via libdrm is not compiled in (libdrm 2.4.71 required), attempting memory path\n"));
+	fputs(_("GPU usage reporting via libdrm is not compiled in (libdrm 2.4.71 required), attempting memory path\n"), stderr);
 #endif
 
 #ifdef RADEON_INFO_VRAM_USAGE
@@ -161,8 +178,8 @@ void init_radeon(int fd, int drm_major, int drm_minor, int family) {
 		else
 			drmError(ret, _("Failed to get GTT usage"));
 	} else
-		fprintf(stderr, _("Memory usage reporting is disabled (radeon kernel driver 2.39.0 required)\n"));
+		fputs(_("Memory usage reporting is disabled (radeon kernel driver 2.39.0 required)\n"), stderr);
 #else
-	fprintf(stderr, _("Memory usage reporting is not compiled in (libdrm 2.4.53 required)\n"));
+	fputs(_("Memory usage reporting is not compiled in (libdrm 2.4.53 required)\n"), stderr);
 #endif
 }

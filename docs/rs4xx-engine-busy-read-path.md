@@ -2,7 +2,7 @@
 
 RadeonTop reports R300-class (RS400/RS480/RS482/RS485) GPU utilization by
 sampling `RBBM_STATUS` through the BAR2 PCI sysfs `resourceN` node and
-accumulating set-bit counts into a duty-cycle estimate. This document states the
+accumulating set-bit counts into a duty-cycle estimate. The read-path model states the
 read path, the bit-to-gauge map with the evidence behind each entry, the
 statistical model the reported percentage obeys, and the hardware hazard that
 bounds where the poller may read.
@@ -48,23 +48,22 @@ The aperture size is measured. On the RS482 target sysfs reports BAR2 as
 `0xc0100000-0xc010ffff`, so the register BAR is 64 KiB and the R600+ GRBM window
 at `0x8000` lies inside it.
 
-An earlier revision of this document read `CONFIG_REG_APER_SIZE` (`0x0110`) as
-`0x00008000` and concluded the register aperture is 32 KiB with the GRBM window
-past its end. The direct BAR measurement falsifies that: `0x0110` reports a
-different aperture, and it is not the MMIO register BAR size. The family branch
-in `open_pci` therefore rests on capability rather than addressability -- GRBM is
+`CONFIG_REG_APER_SIZE` (`0x0110`) reports `0x00008000` for a different
+aperture; it does not report the MMIO register BAR size. The direct BAR
+measurement falsifies a 32 KiB register-aperture interpretation. The family
+branch in `open_pci` rests on capability rather than addressability -- GRBM is
 an R600 construct that R300-class parts do not implement -- and the size check
-added alongside it is an independent guard for a BAR too small to decode the
-window it is about to map.
+is an independent guard for a BAR too small to decode the mapped window.
 
 `RBBM_STATUS` at `0x0E40` sits inside the window mapped at offset 0 for the SRBM
 registers (`SRBM_MMAP_SIZE = 0xE54`), so `getgrbm_pci_r300` reads it from
-`srbm_area` without a second mapping. The same crosswalk reads `0x0E40` directly
-and returns the idle baseline `0x00000140` with the boot ID unchanged across the
-capture, which confirms the offset is safe to read on this part.
+`srbm_area` without a second mapping. The decision-grade `steinmarder-r300`
+capture for candidate `f9d9e471` maps exactly 3668 bytes read-only, opens only
+resource2, and retains a stable boot and empty kernel hazard delta. The hazard
+policy admits `RBBM_STATUS` offset `0x0E40`; no other offset enters the capture.
 
-`radeontop -m` forces the direct MMIO path on any card, which is also the only
-supported path under the Catalyst driver.
+`radeontop -m` forces the family-validated direct MMIO path. With `-p`, the DRM
+node selects an exact PCI BDF and `-m` forces the direct path for that same BDF.
 
 ### The read range is a safety boundary, not hygiene
 
@@ -81,27 +80,32 @@ and floods.
 A gated experiment cleared `SyncOnWdogEn` and re-read a confirmed wedge offset:
 both cores still froze and the machine needed a manual power cycle. The sync
 flood is therefore not the proximate cause, and the freeze survives its removal.
-The operative conclusion for this tool is unchanged and stronger: a read of the
+The operative conclusion for radeontop is direct: a read of the
 wrong offset on this hardware ends the session with a cold power cycle, no log,
 and no software exit.
 
-A free-running poller reading a mapped BAR at 120 Hz is exactly the shape that
-hazard punishes. Two consequences bind this repository. The poller reads only
-offsets with a retained same-boot safe-read observation, currently `0x0E40` and
-the SRBM window. Any new lane reading an unproven offset belongs in a gated
-probe with boot-ID capture, in the evidence lane, rather than in this tool.
+A free-running poller reading a mapped BAR at 120 Hz creates the hazardous
+access shape. Two consequences bind radeontop-gororoba. The RS482 collector
+dereferences only `RBBM_STATUS` at `0x0E40`; mapping an aperture proves no other
+offset safe. Any new lane reading an unproven offset belongs in a gated probe
+with boot-ID capture in the evidence lane rather than in radeontop.
 
 ## RBBM_STATUS field map
 
 Field authority is `R_000E40_RBBM_STATUS` in `r300d.h`, read from the
-`radeon-custom` DKMS source at
-`packaging/arch/radeon-unified-dkms/.../radeon/r300d.h`. `rs400d.h` carries the
-identical definitions.
+retained Linux source at
+`steinmarder-r300:docs/external_sources/rs480_r300_registers_and_driver_sources/raw/source/linux/r300d.h`.
+The adjacent `rs400d.h` carries identical definitions. The deployed kernel
+revision remains a separate run-identity field.
 
-Target observation is the retained histogram in `Provenance` below. "Set" means
-the bit was observed set in at least one sample; "clear" means it was clear in
-every sample of every workload tried, which is negative evidence about
-observability rather than proof the signal is unwired.
+Target observation is the finite histogram reported by the active,
+noncanonical finding in `Provenance` below. "Set" means the finding records the
+bit set in at least one sample; "clear" means the finding records it clear in
+every sampled workload. That histogram's absent raw bundle bounds the bit map to
+a claim input rather than decision-grade silicon evidence. The admitted
+candidate capture retains per-window lane counts rather than the histogram's
+individual raw words, so it validates the read path without silently promoting
+the older bit-exposure rows.
 
 | Bit | `r300d.h` field | Field kind | Target observation | radeontop lane | Exposed |
 |---|---|---|---|---|---|
@@ -122,7 +126,7 @@ observability rather than proof the signal is unwired.
 | 21 | `RE_BUSY` | block busy | clear | masked off | no |
 | 22 | `TAM_BUSY` | block busy | clear | masked off | no |
 | 23 | `TDM_BUSY` | block busy | clear | masked off | no |
-| 24 | `PB_BUSY` | undocumented | clear | masked off | no |
+| 24 | `PB_BUSY` | block busy | clear | masked off | no |
 | 25 | `TIM_BUSY` | block busy | clear | masked off | no |
 | 26 | `GA_BUSY` | block busy | set under load | `pa` | yes |
 | 27 | `CBA2D_BUSY` | block busy | clear | `rb2d` | on assertion |
@@ -143,7 +147,7 @@ resolution, and the two backends cannot be separated from its output.
 ### Lane labels
 
 Three UI labels are inherited from the R600 lane set and overstate what the R300
-field names establish. `vgt` renders as "Vertex Grouper + Tesselator" while the
+field names establish. `vgt` renders as "Vertex Grouper + Tessellator" while the
 R300 field is `VAP_BUSY`; `cf` renders as "Cmd Fetch" while the field names only
 `CF_PIPE`; `rb2d` renders as "2D Backend" for a two-bit union. The precise
 R300-side names are `VAP`, `CF pipe`, and `RB2D or CBA2D`, and the rendered
@@ -151,9 +155,30 @@ labels are interpretations layered on those.
 
 ## Provenance
 
-The rank-1 histogram is retained at
-`steinmarder-r300@9d04840:src/re/r300/findings/active/2026-06-10-rs482-rbbm-backend-busy-bits-nonlatching-under-load.md`,
-`sha256:78956562f2264bc059886b83...`, marked `canonical: false`.
+Commit `870b22da8cc3070186927e5fea22196f88dd7c76` on merged
+`steinmarder-r300` `main` retains the candidate acceptance bundle and finding:
+
+```text
+steinmarder-r300:src/re/r300/results/cachyos_vostro1000_rs482_rbbm_status_mmio_capture_20260809T185637Z
+steinmarder-r300:src/re/r300/findings/active/rs482-rbbm-status-mmio-capture-observability.md
+```
+
+The SHA-256 of its outer `bundle_hashes.sha256` is
+`5ab48d99b4cebfe0d7183e5bf3478cd6147154d56e717cc8fba2e8ac02a193a7`.
+The bundle binds the exact source and executed binaries, target identity, boot,
+commands, live texture load, resource2 mapping, permanent privilege removal,
+kernel delta, JSON accounting, and manifest preimages. It admits the
+`RBBM_STATUS` read path and the exposed GUI and VGT measurements for that run.
+It does not retain each raw register word needed to replace the field table's
+older histogram.
+
+The rank-1 histogram report lives at
+`steinmarder-r300:src/re/r300/findings/active/2026-06-10-rs482-rbbm-backend-busy-bits-nonlatching-under-load.md`,
+marked `canonical: false`. The finding file's audit-snapshot SHA-256 is
+`78956562f2264bc059886b83a94fe4040b57138f387cae69277d79b86563471e`.
+That digest identifies the prose input rather than a silicon-run bundle. The
+finding lacks a complete bundle hash, boot ID, exact command set, and binary and
+kernel identities, so its measurements remain bounded supporting evidence.
 
 | Field | Value |
 |---|---|
@@ -163,12 +188,19 @@ The rank-1 histogram is retained at
 | Samples | 157x `0x00000140`, 91x `0x8401C100`, 1x `0x84116100`, 1x `0x8401C12B` |
 | Aggregate OR | `0x8411E16B` |
 
-An earlier commit in this repository cited an aggregate of `0x8411E17C`
-attributed to an uncapped `glxgears` run. That value differs from the retained
+The four raw words matter individually. `0x8401C100` asserts
+`GUI_ACTIVE|GA_BUSY|CP_CMDSTRM_BUSY|ENG_EV_BUSY|CF_PIPE_BUSY`. The rare
+`0x84116100` sample asserts
+`GUI_ACTIVE|GA_BUSY|VAP_BUSY|CP_CMDSTRM_BUSY|CF_PIPE_BUSY|CFRQ_IN_RTBUF` and
+clears `ENG_EV_BUSY`. It is not the dominant busy word plus VAP and CFRQ. This
+bitwise decomposition prevents a composite label from inventing an assertion
+that the raw word does not contain.
+
+The unretained `0x8411E17C` aggregate attributed to an uncapped `glxgears` run
+differs from the retained
 histogram in bits 0, 1, 2, and 4, all inside the `CMDFIFO_AVAIL` field, and no
-raw capture backing it is present in the evidence lane. This document cites the
-traceable histogram only, and the busy-bit conclusions are unchanged because the
-two aggregates agree on every bit above 13.
+raw capture backing it is present in the evidence lane. The read-path model cites the
+traceable histogram only. The two aggregates agree on every busy bit above 13.
 
 A citation that supports a measurement names the repository and commit, the
 file, the target PCI ID, the boot or run ID, the sampler command, the workload
@@ -237,8 +269,8 @@ which the 3D workload explains on its own. A separate `x11perf -copywinwin500`
 run at 235 copies per second drove `gui`, `pa`, and `cp` to 90 percent and left
 the 2D lanes idle.
 
-An earlier explanation in this repository stated categorically that the modern
-DDX routes copies through the 3D engine. That is false as a general claim about
+The categorical claim that the modern DDX routes copies through the 3D engine
+is false as a general claim about
 `xf86-video-ati`: `src/radeon_exa_funcs.c` implements `RADEONCopy` over the
 hardware 2D engine and submits `Emit2DState(pScrn, RADEON_2D_EXA_COPY)`, and
 that legacy path is the one selected for R300-class parts. The statement can
@@ -273,23 +305,32 @@ command-stream trace. Until that runs, the zero 2D lanes select no explanation.
 
 ## The reported percentage is a sampled duty cycle
 
-`ticks.c::collector` samples a level signal and counts predicate hits. It reads
-no hardware performance counter, so the reported percentage is a statistical
-estimate rather than a measurement of occupancy.
+`collector.c::collector_worker` samples a level signal and counts predicate
+hits. It reads no hardware performance counter, so the reported percentage is a
+statistical estimate rather than a direct occupancy counter.
 
-The collector sleeps `sleeptime = 1e6 / ticks` microseconds between samples and
-accumulates over `N = ticks * dumpinterval` samples per report. `dump.c` and
-`ui.c` normalize with `k = 1.0f / ticks / dumpinterval`, so a lane reports
+One scheduled window contains `N = ticks * dumpinterval` nominal slots. The
+collector attempts `A` slots, gives up `M` slots whose sample points have passed,
+validates `V` reads of the lane's source register, records `F` failed reads, and
+observes `B` busy predicates. The schedule maintains `A + M = N`. A lane reports
 
 ```text
-p_hat = (1 / N) * sum(X_i for i in 1..N) * 100 percent
+p_conditional = B / V
 ```
 
-with `X_i` the lane predicate above. `p_hat` is the fraction of **sampled
-instants** at which the lane was set. Equating it with an elapsed-time duty cycle
-requires the sample instants to be unbiased with respect to the workload, which
-the following three properties bound. Defaults are `ticks = 120` and
-`dumpinterval = 1`, giving `N = 120`.
+over successful reads, and renders `N/A` when `V = 0`. The dump appends the
+exact `B`, `V`, and `N` plus the assumption-free interval
+
+```text
+p_lower = B / N
+p_upper = (B + N - V) / N
+```
+
+The interval assigns every unobserved slot idle at the lower endpoint and busy
+at the upper endpoint. It remains valid when missed or failed reads correlate
+with load. The point estimate and both bounds describe sampled instants;
+equating them with elapsed-time duty still requires representative sample
+timing. Defaults are `ticks = 120` and `dumpinterval = 1`, giving `N = 120`.
 
 ### Sampling correlated with the workload biases the estimate
 
@@ -305,13 +346,14 @@ sampled at randomized phase is estimated well.
 
 ### The IID error bound is a reference value, not the instrument's uncertainty
 
-For independent samples the standard error is `sqrt(p(1-p)/N)`, which is 2.7
+For independent, fully observed samples the standard error is
+`sqrt(p(1-p)/N)`, which is 2.7
 percentage points at `p = 0.9` and `N = 120`. GPU busy states carry temporal
 autocorrelation: adjacent samples fall inside the same frame, command batch, and
 scheduler episode. For a stationary binary series the variance is
 
 ```text
-Var(p_hat) = (1/N^2) * [ N*g_0 + 2 * sum((N-k) * g_k for k in 1..N-1) ]
+Var(p_sample) = (1/N^2) * [ N*g_0 + 2 * sum((N-k) * g_k for k in 1..N-1) ]
 ```
 
 with `g_k` the lag-`k` autocovariance. Positive autocorrelation shrinks the
@@ -345,8 +387,16 @@ boundaries publishes those windows first, with no attempt of their own, before
 the read runs.
 
 Sampling on a fixed grid remains a periodic process, so a workload periodic at a
-harmonic of the sampling rate can still be sampled at a fixed phase. Dithering
-the deadlines would break that coupling and is not implemented.
+harmonic of the sampling rate can still be sampled at a fixed phase.
+`--dither-seed N` moves each deadline by a reproducible offset inside its own
+slot. Let slot width be `T`, dither offset be `D`, and wake lateness be `L`.
+The sample survives only when `D + L < T`, so a uniform dither gives
+`P(accepted | L) = max(0, 1 - L/T)` and accepted offsets occupy `[0,T-L)`.
+Dithering breaks fixed phase while scheduler delay selects against late-slot
+phases. Coverage reports the amount of selection, and the unconditional bounds
+cover its missing state; neither establishes uniform accepted phase. Each slot
+uses its exact carried integer width, and rejection sampling removes modulo bias
+from the splitmix64-to-slot projection.
 
 ## Reproduction
 
@@ -355,7 +405,7 @@ the deadlines would break that coupling and is not implemented.
 radeontool regmatch 0xe40                # raw register histogram, sibling tool
 ```
 
-Loads used for the retained observations:
+Loads used for the reported histogram observations:
 
 ```sh
 glmark2-es2 --benchmark texture          # sustained textured fill, 126 FPS
@@ -363,14 +413,16 @@ x11perf -copywinwin500                   # 2D copy, 235 copies per second
 ```
 
 Retained bundles, probe scripts, hazard policy, and the verdict assigned to each
-run live in `steinmarder-r300` under `src/re/r300/`. This repository carries the
+run live in `steinmarder-r300` under `src/re/r300/`. Radeontop-gororoba carries the
 citation, not the bundle.
 
-## Recorded observations
+## Reported observations pending bundle admission
 
-Measured on the RS482 target with the monitor sampling at 120 Hz. Loads are
-named; unnamed conditions are not measured. Values carry the uncertainty
-discussed above and are not tighter than the IID reference.
+The active finding reports the values below on the RS482 target at 120 Hz. It
+does not retain the complete boot, command, binary, kernel, and artifact-hash
+surface required for canonical admission. The values guide reproduction and
+carry the uncertainty discussed above; they do not become tighter than the IID
+reference or decision-grade through repetition in the read-path model.
 
 | Load | gpu | cp | ee | pa | vgt | Memory |
 |---|---|---|---|---|---|---|
@@ -381,11 +433,12 @@ discussed above and are not tighter than the IID reference.
 `ta`, `sc`, `cb`, and `db` stayed at zero across every sample of three runs
 (idle, a 136-case deqp texture-filtering run, and the sustained fill).
 
-### On-target run, merged tree
+### Unretained on-target run report
 
-Measured on `cachyos-vostro1000`, RS482 PCI `1002:5974`, kernel 7.1.3-2-cachyos,
-binary built at the merged commit from this repository, sampling at 120 Hz
-through `radeontop -m`. The boot identifier is unchanged across the run.
+A prior local report names `cachyos-vostro1000`, RS482 PCI `1002:5974`, kernel
+7.1.3-2-cachyos, a merged source revision, and `radeontop -m` at 120 Hz. Its raw
+bundle is absent from `steinmarder-r300`, so the table remains an unadmitted
+reproduction target.
 
 | Load | gpu | pa | cf | ee | cp | vgt | e2 | rb2d |
 |---|---|---|---|---|---|---|---|---|
@@ -421,7 +474,7 @@ cycle only through its sample count.
 and `dump.c` emits them as a single `#` header line when all three parse. The
 debugfs file comes from the `steinmarder` RS480 candidate-regs lane rather than
 stock upstream radeon, so an absent file leaves the header out and the run
-otherwise unchanged.
+behaviorally identical.
 
 ## Collector architecture and its acceptance
 
@@ -441,22 +494,18 @@ allows four; sampling before rolling the windows a wake-up overran makes the
 attribution case count two attempts in a window that saw one. Both mutations
 fail the suite, and the implementation passes it.
 
-Silicon evidence for the read path itself is the RS482 target under the loads
-named above. The rate result is `valid 500/500, missed 0, failed 0` for a
-sustained 500 Hz window, which establishes a validated rate of at least 500 Hz
-for that source, host, load, and boot; the `1000000` parser bound is arithmetic
-and carries no silicon claim. The grid change is visible in successive window
-labels: a relative-sleep control drifts forward monotonically window over window,
-while the absolute grid holds its sub-second offset. The bundles carrying the
-exact commands, boot identifiers, window counts, and raw output live on the
-target and are not yet mirrored into `steinmarder-r300`; until they are, those
-figures rest on the run report rather than on a retained artifact.
+The target-local report names `valid 500/500, missed 0, failed 0` for a sustained
+500 Hz window and describes a relative-sleep control drifting against the
+absolute grid. Its exact commands, boot identifier, window counts, binary hash,
+and raw output remain absent from `steinmarder-r300`. The figures therefore rest
+on the report rather than a retained artifact and establish no admitted rate.
+The `1000000` parser bound remains arithmetic and carries no silicon claim.
 
-Not run: the permanent privilege drop, which needs a setuid-root installed binary
-because a process launched through `sudo` already has real uid 0 and can only
-drop to 0; and the `libdrm_amdgpu` and radeon-ioctl paths, for which no part is
-reachable, leaving their `-errno` classification reasoned from API convention and
-exercised only by the synthetic backend.
+The decision-grade candidate bundle proves the permanent privilege drop with a
+setuid-root installed binary invoked by UID 1000. The `libdrm_amdgpu` and
+radeon-ioctl paths remain not run because no reachable part exposes either
+hardware path; their `-errno` classification remains reasoned from API
+convention and exercised only by the synthetic backend.
 
 ## Open work
 
@@ -468,9 +517,9 @@ Named slices, each independently landable.
   distribution rather than an aggregate.
 - **Collector, MMIO, packaging, and CI**: `docs/open-work.md` carries these,
   grouped by the gate each item waits on, because they span the whole tool
-  rather than the read path this document models.
-- **Unmapped**: `PB_BUSY` (bit 24) carries no block meaning in `r300d.h` and
-  stays unmapped until a source names it. The per-block cache status registers in
-  the `0x4xxx` window are the readable alternative to the non-observable back-end
-  bits, and they belong to a gated probe with boot-ID capture rather than a
-  free-running poller.
+  rather than the modeled read path.
+- **Unmapped**: `r300d.h` names `PB_BUSY` at bit 24, while the retained RS482
+  samples do not observe it. It stays masked until target evidence supports a
+  useful exposure. Active GA and ZB reads in the `0x4xxx` window remain outside
+  the poller because the retained `0x42d0` GA read under GUI activity deep-wedged
+  the host and ZB active-read behavior remains unobserved.

@@ -17,20 +17,20 @@
 #include "radeontop.h"
 
 #include <math.h>
-#include <math.h>
 #include <ncurses.h>
 #include <stdarg.h>
 #include <stdio.h>
 
-static void printcenter(const unsigned int y, const unsigned int width,
-				const char * const fmt, ...) {
+static void __attribute__((format(printf, 3, 4)))
+printcenter(const unsigned int y, const unsigned int width,
+		const char * const fmt, ...) {
 
 	char *ptr;
 	va_list ap;
 	va_start(ap, fmt);
 
-	// vasprintf leaves ptr indeterminate when it fails, and mbstowcs, mvprintw
-	// and free below all take it, so a failed allocation drops the line here.
+	// vasprintf leaves ptr indeterminate when it fails.  The failed-allocation
+	// branch drops the line before mbstowcs, mvprintw, or free receives ptr.
 #ifdef ENABLE_NLS
 	if (vasprintf(&ptr, fmt, ap) < 0) {
 		va_end(ap);
@@ -55,15 +55,16 @@ static void printcenter(const unsigned int y, const unsigned int width,
 	free(ptr);
 }
 
-static void printright(const unsigned int y, const unsigned int width,
-				const char * const fmt, ...) {
+static void __attribute__((format(printf, 3, 4)))
+printright(const unsigned int y, const unsigned int width,
+		const char * const fmt, ...) {
 
 	char *ptr;
 	va_list ap;
 	va_start(ap, fmt);
 
-	// vasprintf leaves ptr indeterminate when it fails, and mbstowcs, mvprintw
-	// and free below all take it, so a failed allocation drops the line here.
+	// vasprintf leaves ptr indeterminate when it fails.  The failed-allocation
+	// branch drops the line before mbstowcs, mvprintw, or free receives ptr.
 #ifdef ENABLE_NLS
 	if (vasprintf(&ptr, fmt, ap) < 0) {
 		va_end(ap);
@@ -108,11 +109,12 @@ static void percentage(const unsigned int y, const unsigned int w, const float p
 // Waits in bounded steps so a termination signal is observed while waiting.
 // Returns a collector_wait_result.
 static int wait_bounded(struct collector *collector, uint64_t after,
-		struct collector_snapshot *out) {
+		struct collector_snapshot *snapshot_out,
+		struct collector_terminal *terminal_out) {
 	struct timespec deadline;
 
 	if (clock_gettime(CLOCK_MONOTONIC, &deadline))
-		return COLLECTOR_WAIT_FATAL;
+		return COLLECTOR_WAIT_ERROR;
 
 	deadline.tv_nsec += 200000000L;
 	if (deadline.tv_nsec >= 1000000000L) {
@@ -120,7 +122,17 @@ static int wait_bounded(struct collector *collector, uint64_t after,
 		deadline.tv_sec++;
 	}
 
-	return collector_wait_next(collector, after, &deadline, out);
+	return collector_wait_next(collector, after, &deadline, snapshot_out,
+		terminal_out);
+}
+
+static void report_terminal(enum collector_terminal_cause cause) {
+	if (cause == COLLECTOR_TERMINAL_DEVICE_READ)
+		fputs(_("The collector lost the device, stopping.\n"), stderr);
+	else if (collector_terminal_cause_is_clock(cause))
+		fputs(_("The collector clock failed, stopping.\n"), stderr);
+	else
+		fputs(_("The collector schedule failed, stopping.\n"), stderr);
 }
 
 int present(struct collector *collector, const struct engine_masks *masks,
@@ -130,22 +142,27 @@ int present(struct collector *collector, const struct engine_masks *masks,
 	const unsigned int ticks = collector->config.ticks;
 	const unsigned int dumpinterval = collector->config.dumpinterval;
 	struct collector_snapshot snapshot;
+	struct collector_terminal terminal;
 	int status = 0;
 
-	printf(_("Collecting data, please wait....\n"));
+	fputs(_("Collecting data, please wait....\n"), stdout);
 
 	memset(&snapshot, 0, sizeof(snapshot));
 
 	// Draw nothing until one whole window completes; a partial window is not
 	// a measurement.
 	for (;;) {
-		const int wait = wait_bounded(collector, 0, &snapshot);
+		const int wait = wait_bounded(collector, 0, &snapshot, &terminal);
 
 		if (wait == COLLECTOR_WAIT_SNAPSHOT)
 			break;
 
 		if (wait == COLLECTOR_WAIT_FATAL) {
-			fprintf(stderr, _("The collector lost the device, stopping.\n"));
+			report_terminal(terminal.cause);
+			return 1;
+		}
+		if (wait == COLLECTOR_WAIT_ERROR) {
+			fputs(_("The collector wait failed, stopping.\n"), stderr);
 			return 1;
 		}
 
@@ -153,7 +170,11 @@ int present(struct collector *collector, const struct engine_masks *masks,
 			return 0;
 	}
 
-	newterm(NULL, stderr, stdin);
+	SCREEN *screen = newterm(NULL, stderr, stdin);
+	if (!screen) {
+		fputs(_("Failed to initialize the terminal interface.\n"), stderr);
+		return 1;
+	}
 	noecho();
 	halfdelay(10);
 	curs_set(0);
@@ -199,14 +220,24 @@ int present(struct collector *collector, const struct engine_masks *masks,
 		move(1,0);
 		clrtobot();
 
-		// One published generation is one completed measurement window.
-		// The snapshot is copied whole under the collector's mutex, so
-		// every figure below comes from one window rather than from a
-		// structure the collector is still writing.
-		collector_peek(collector, &snapshot);
+		// One mutex acquisition pairs the displayed generation with the terminal
+		// record that follows it.  A terminal after generation N appears beside
+		// generation N.
+		if (collector_state_peek(collector, &snapshot, &terminal) ||
+			!snapshot.generation) {
+			fputs(_("The collector state is unavailable, stopping.\n"), stderr);
+			status = 1;
+			break;
+		}
+		const bool terminal_observed =
+			terminal.cause != COLLECTOR_TERMINAL_NONE;
 
 		struct timespec drawn_at;
-		clock_gettime(CLOCK_MONOTONIC, &drawn_at);
+		if (clock_gettime(CLOCK_MONOTONIC, &drawn_at)) {
+			fputs(_("Failed to read the display clock.\n"), stderr);
+			status = 1;
+			break;
+		}
 
 		const double age_s =
 			collector_timespec_delta_ns(&snapshot.published, &drawn_at) / 1e9;
@@ -252,8 +283,13 @@ int present(struct collector *collector, const struct engine_masks *masks,
 		// generation counts completed windows, the age is time since that
 		// window published, and the coverage is valid status reads over
 		// nominal slots.
-		if (snapshot.fatal) {
-			mvprintw(1, 0, "%s", _("collector: device lost"));
+		if (terminal_observed) {
+			if (terminal.cause == COLLECTOR_TERMINAL_DEVICE_READ)
+				mvprintw(1, 0, "%s", _("collector: device lost"));
+			else if (collector_terminal_cause_is_clock(terminal.cause))
+				mvprintw(1, 0, "%s", _("collector: clock failed"));
+			else
+				mvprintw(1, 0, "%s", _("collector: schedule failed"));
 			status = 1;
 		} else if (age_s > 2.0 * dumpinterval) {
 			mvprintw(1, 0, _("gen %llu  age %.1fs  STALE"),
@@ -286,13 +322,13 @@ int present(struct collector *collector, const struct engine_masks *masks,
 
 		if (color) attron(COLOR_PAIR(2));
 		percentage(start, w, vgt);
-		printright(start++, hw, _("Vertex Grouper + Tesselator %6.2f%%"), vgt);
+		printright(start++, hw, _("Vertex Grouper + Tessellator %6.2f%%"), vgt);
 		if (color) attroff(COLOR_PAIR(2));
 
 		// Enough height?
 		if (h > bigh) start++;
 
-		// A zero mask means the block is absent on this family, or its
+		// A zero mask means the block is absent on the selected family, or its
 		// exposure on the target remains unconfirmed and the lane stays
 		// unexposed until an observation supports it, so the row is
 		// dropped rather than rendered as a perpetual 0.00%.
@@ -446,11 +482,12 @@ int present(struct collector *collector, const struct engine_masks *masks,
 		if (c == 'c' || c == 'C') color = !color;
 		if (c == KEY_RESIZE) resize = 1;
 
-		if (snapshot.fatal)
+		if (terminal_observed)
 			break;
 	}
 
 	endwin();
+	delscreen(screen);
 
 	return status;
 }

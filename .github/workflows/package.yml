@@ -36,8 +36,10 @@ jobs:
             git namcap \
             libpciaccess libdrm ncurses libxcb
 
-      - uses: actions/checkout@v4
+      # actions/checkout v7.0.1 supplies this immutable revision.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - name: Read the recipe pins

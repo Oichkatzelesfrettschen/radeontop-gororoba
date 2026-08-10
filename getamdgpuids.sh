@@ -5,7 +5,7 @@
 #
 
 quit() {
-	echo "Usage: $0 /path/to/kernel/src"
+	echo "Usage: $0 KERNEL_SOURCE_ROOT"
 	exit
 }
 

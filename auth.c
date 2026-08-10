@@ -17,6 +17,7 @@
 #include "radeontop.h"
 #include <xf86drm.h>
 #ifdef ENABLE_XCB
+#include "auth_xcb.h"
 #include <dlfcn.h>
 
 typedef void (*auth_magic_func)(drm_magic_t magic);
@@ -28,7 +29,7 @@ static void call_authenticate_drm_xcb(drm_magic_t magic) {
 	}
 
 	auth_magic_func func = (auth_magic_func) dlsym(handle,
-			"authenticate_drm_xcb");
+			RADEONTOP_XCB_AUTH_SYMBOL);
 	if (func) {
 		func(magic);
 	}
@@ -48,7 +49,7 @@ void authenticate_drm(int fd) {
 	if (drmAuthMagic(fd, magic) == 0) {
 		if (drmDropMaster(fd)) {
 			perror(_("Failed to drop DRM master"));
-			fprintf(stderr, _("\nWARNING: other DRM clients will crash on VT switch while radeontop is running!\npress ENTER to continue\n"));
+			fputs(_("\nWARNING: other DRM clients will crash on VT switch while radeontop is running!\npress ENTER to continue\n"), stderr);
 			fgetc(stdin);
 		}
 		return;

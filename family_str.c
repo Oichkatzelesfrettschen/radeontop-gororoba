@@ -83,3 +83,6 @@ const char * const family_str[] = {
 	str(CYAN_SKILLFISH),
 	str(BEIGE_GOBY),
 };
+
+_Static_assert(sizeof(family_str) / sizeof(family_str[0]) == RADEON_FAMILY_COUNT,
+	"family_str must name every radeon_family value");

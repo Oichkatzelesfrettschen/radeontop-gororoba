@@ -15,6 +15,7 @@
 */
 
 #include "radeontop.h"
+#include <errno.h>
 #include <xf86drm.h>
 #include <libdrm/amdgpu_drm.h>
 #include <libdrm/amdgpu.h>
@@ -47,14 +48,29 @@ static int getgtt_amdgpu(uint64_t *out) {
 }
 
 #ifdef HAS_AMDGPU_QUERY_SENSOR_INFO
+static int getclock_amdgpu(unsigned int sensor, uint32_t *out) {
+	uint32_t mhz;
+	int result;
+
+	result = amdgpu_query_sensor_info(amdgpu_dev, sensor, sizeof(mhz), &mhz);
+	if (result)
+		return result;
+
+	// Linux amdgpu_kms.c returns the GFX_SCLK and GFX_MCLK sensors in
+	// megahertz, while AMDGPU_INFO_DEV_INFO returns maximum clocks in
+	// kilohertz.  The collector keeps both sides in kilohertz.
+	if (!radeon_clock_mhz_to_khz(mhz, out))
+		return -ERANGE;
+
+	return 0;
+}
+
 static int getsclk_amdgpu(uint32_t *out) {
-	return amdgpu_query_sensor_info(amdgpu_dev, AMDGPU_INFO_SENSOR_GFX_SCLK,
-		sizeof(uint32_t), out);
+	return getclock_amdgpu(AMDGPU_INFO_SENSOR_GFX_SCLK, out);
 }
 
 static int getmclk_amdgpu(uint32_t *out) {
-	return amdgpu_query_sensor_info(amdgpu_dev, AMDGPU_INFO_SENSOR_GFX_MCLK,
-		sizeof(uint32_t), out);
+	return getclock_amdgpu(AMDGPU_INFO_SENSOR_GFX_MCLK, out);
 }
 #endif
 
@@ -80,24 +96,33 @@ void init_amdgpu(int fd) {
 	if (DRM_ATLEAST_VERSION(3, 11)) {
 		struct amdgpu_gpu_info gpu;
 
-		amdgpu_query_gpu_info(amdgpu_dev, &gpu);
-		sclk_max = gpu.max_engine_clk;
-		mclk_max = gpu.max_memory_clk;
+		memset(&gpu, 0, sizeof(gpu));
+		ret = amdgpu_query_gpu_info(amdgpu_dev, &gpu);
+		if (ret) {
+			drmError(ret, _("Failed to get GPU clock limits"));
+		} else if (gpu.max_engine_clk > UINT32_MAX ||
+			gpu.max_memory_clk > UINT32_MAX) {
+			drmError(-ERANGE, _("GPU clock limits exceed the supported range"));
+		} else {
+			sclk_max = (uint32_t) gpu.max_engine_clk;
+			mclk_max = (uint32_t) gpu.max_memory_clk;
 
-		if (!(ret = getsclk_amdgpu(&out32)))
-			getsclk = getsclk_amdgpu;
-		else
-			drmError(ret, _("Failed to get shader clock"));
+			if (!(ret = getsclk_amdgpu(&out32)))
+				getsclk = getsclk_amdgpu;
+			else
+				drmError(ret, _("Failed to get shader clock"));
 
-		if (!(ret = getmclk_amdgpu(&out32)))
-			getmclk = getmclk_amdgpu;
-		else	// memory clock reporting not available on APUs
-			if (!(gpu.ids_flags & AMDGPU_IDS_FLAGS_FUSION))
+			if (!(ret = getmclk_amdgpu(&out32)))
+				getmclk = getmclk_amdgpu;
+			// A Fusion APU has no dedicated memory clock, so its failed
+			// sensor query stays unreported.
+			else if (!(gpu.ids_flags & AMDGPU_IDS_FLAGS_FUSION))
 				drmError(ret, _("Failed to get memory clock"));
+		}
 	} else
-		fprintf(stderr, _("Clock frenquency reporting is disabled (amdgpu kernel driver 3.11.0 required)\n"));
+		fputs(_("Clock frequency reporting is disabled (amdgpu kernel driver 3.11.0 required)\n"), stderr);
 #else
-	fprintf(stderr, _("Clock frequency reporting is not compiled in (libdrm 2.4.79 required)\n"));
+	fputs(_("Clock frequency reporting is not compiled in (libdrm 2.4.79 required)\n"), stderr);
 #endif
 
 	struct drm_amdgpu_info_vram_gtt vram_gtt;
@@ -122,7 +147,7 @@ void init_amdgpu(int fd) {
 		drmError(ret, _("Failed to get GTT usage"));
 }
 
-void cleanup_amdgpu() {
+void cleanup_amdgpu(void) {
 	if (amdgpu_dev)
 		amdgpu_device_deinitialize(amdgpu_dev);
 }

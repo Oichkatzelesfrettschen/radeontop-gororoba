@@ -15,7 +15,7 @@
 */
 
 #include "radeontop.h"
-#include <xf86drm.h>
+#include "auth_xcb.h"
 #include <xcb/xcb.h>
 #include <xcb/dri2.h>
 

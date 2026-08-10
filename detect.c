@@ -17,10 +17,10 @@
 
 #include "radeontop.h"
 #include <pciaccess.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <xf86drm.h>
-#include <errno.h>
 
 struct bits_t bits;
 uint64_t vramsize;
@@ -28,8 +28,24 @@ uint64_t gttsize;
 unsigned int sclk_max = 0; // kilohertz
 unsigned int mclk_max = 0; // kilohertz
 struct rs480_gart_observed_t rs480_gart_observed;
-const void *area;
+static const void *area;
 static const void *srbm_area;
+static int active_drm_fd = -1;
+
+enum drm_open_result {
+	DRM_OPEN_FAILED = -1,
+	DRM_OPEN_IDENTITY_ONLY,
+	DRM_OPEN_BACKEND_READY
+};
+
+_Static_assert(sizeof(((struct pci_device *) 0)->regions) /
+	sizeof(((struct pci_device *) 0)->regions[0]) == RADEON_PCI_RESOURCE_COUNT,
+	"the direct-MMIO resource bound must match libpciaccess");
+
+static bool pci_resource_index_valid(int resource_index) {
+	return resource_index >= 0 &&
+		resource_index < RADEON_PCI_RESOURCE_COUNT;
+}
 
 // function pointers to the right backend
 int (*getgrbm)(uint32_t *out);
@@ -40,7 +56,22 @@ int (*getgtt)(uint64_t *out);
 int (*getsclk)(uint32_t *out);
 int (*getmclk)(uint32_t *out);
 
-static int find_pci(short bus, struct pci_device *pci_dev) {
+static void set_pci_identity(struct radeon_device_identity *identity,
+		uint16_t domain, uint8_t bus, uint8_t device, uint8_t function,
+		uint16_t vendor_id, uint16_t device_id) {
+	identity->pci_address_valid = true;
+	identity->domain = domain;
+	identity->bus = bus;
+	identity->device = device;
+	identity->function = function;
+	identity->vendor_id = vendor_id;
+	identity->device_id = device_id;
+	identity->family = getfamily(device_id);
+}
+
+static int find_pci(short bus, struct radeon_device_identity *identity) {
+	const bool bind_existing_identity = identity->pci_address_valid;
+	bool found = false;
 	int ret = pci_system_init();
 	if (ret)
 		die(_("Failed to init pciaccess"));
@@ -59,34 +90,62 @@ static int find_pci(short bus, struct pci_device *pci_dev) {
 	struct pci_device_iterator *iter = pci_id_match_iterator_create(&match);
 
 	while ((dev = pci_device_next(iter))) {
-		pci_device_probe(dev);
+		ret = pci_device_probe(dev);
+		if (ret) {
+			fprintf(stderr, _("Failed to probe PCI device %04x:%02x:%02x.%u: %s\n"),
+				dev->domain_16, dev->bus, dev->dev, dev->func,
+				strerror(ret));
+			continue;
+		}
+
 		if ((dev->device_class & 0x00ffff00) != 0x00030000 &&
 			(dev->device_class & 0x00ffff00) != 0x00038000)
 			continue;
-		if (bus < 0 || bus == dev->bus) {
-			*pci_dev = *dev;
+		if (bind_existing_identity &&
+			!radeon_pci_address_matches(identity, dev->domain_16, dev->bus,
+				dev->dev, dev->func))
+			continue;
+		if (!bind_existing_identity && bus >= 0 && bus != dev->bus)
+			continue;
+		{
+			struct radeon_device_identity candidate = *identity;
+			struct radeon_mmio_layout layout;
+
+			set_pci_identity(&candidate, dev->domain_16, dev->bus, dev->dev,
+				dev->func, dev->vendor_id, dev->device_id);
+
+			if (!radeon_mmio_layout_for_family(candidate.family, &layout)) {
+				if (!bind_existing_identity)
+					continue;
+			} else {
+				if (!pci_resource_index_valid(layout.resource_index))
+					die(_("The family classifier returned an invalid PCI resource index"));
+				candidate.resource_index = layout.resource_index;
+				candidate.resource_size = dev->regions[layout.resource_index].size;
+			}
+			*identity = candidate;
+			found = true;
 			break;
 		}
 	}
 
 	pci_iterator_destroy(iter);
 	pci_system_cleanup();
-	return (dev == NULL);
+	return found ? 0 : 1;
 }
 
 // A register load reaches the device on every call.  The volatile qualifier is
 // what requires that: without it the compiler may fold two loads of the same
 // mapped address into one, and a sampler that reads the same register every
 // period is exactly the shape that permits it, so a window would report a value
-// the silicon produced during an earlier one.
+// the silicon produced in a stale sample.
 static inline uint32_t mmio_read32(const void *map, unsigned offset) {
 	return *(const volatile uint32_t *)((const char *) map + offset);
 }
 
-// Each load lands inside the mapping it reads.  Both windows are sized to end
-// at their last register, so a register added above the bound or a mapping
-// length reduced below it stops the build here rather than reading past the
-// mmap at runtime.
+// Each load lands inside the mapping it reads.  Both windows end at their last
+// register, so a register or mapping change outside the bound stops the build
+// rather than reading past the mmap at runtime.
 _Static_assert(GRBM_STATUS >= GRBM_MMAP_BASE &&
 		GRBM_STATUS - GRBM_MMAP_BASE + sizeof(uint32_t) <= MMAP_SIZE,
 		"GRBM_STATUS reads outside the mapped R600+ register window");
@@ -123,48 +182,39 @@ static void init_rs480_gart_observed(void) {
 	static const char path[] = "/sys/kernel/debug/radeon_rs480_candidate_gart_mc_regs";
 	FILE *f = fopen(path, "r");
 	char line[256];
-	unsigned int found = 0;
+	struct rs480_gart_parser parser;
 
 	rs480_gart_observed.valid = 0;
 	if (!f)
 		return;
 
+	rs480_gart_parser_init(&parser);
 	while (fgets(line, sizeof(line), f)) {
-		char *sep = strstr(line, " = ");
-		char *end = NULL;
-		unsigned long value;
-
-		if (!sep)
-			continue;
-
-		errno = 0;
-		value = strtoul(sep + 3, &end, 0);
-		if (errno || end == sep + 3 || value > UINT32_MAX)
-			continue;
-
-		if (!strncmp(line, "AGP_BASE_2", strlen("AGP_BASE_2"))) {
-			rs480_gart_observed.agp_base_2 = (uint32_t) value;
-			found |= 1U << 0;
-		} else if (!strncmp(line, "GART_FEATURE_ID", strlen("GART_FEATURE_ID"))) {
-			rs480_gart_observed.gart_feature_id = (uint32_t) value;
-			found |= 1U << 1;
-		} else if (!strncmp(line, "GART_BASE", strlen("GART_BASE"))) {
-			rs480_gart_observed.gart_base = (uint32_t) value;
-			found |= 1U << 2;
-		}
+		if (!strchr(line, '\n') && !feof(f))
+			parser.malformed = true;
+		rs480_gart_parser_consume(&parser, line);
 	}
 
-	fclose(f);
-	rs480_gart_observed.valid = (found == 0x7);
+	if (ferror(f))
+		parser.malformed = true;
+	if (fclose(f))
+		parser.malformed = true;
+	rs480_gart_parser_finish(&parser, &rs480_gart_observed);
 }
 
-static void open_pci(struct pci_device *gpu_device) {
-	// Warning: gpu_device is a copy of a freed struct. Do not access any pointers!
-	int reg = 2;
-	if (getfamily(gpu_device->device_id) >= BONAIRE)
-		reg = 5;
+static void open_pci(struct radeon_device_identity *identity) {
+	struct radeon_mmio_layout layout;
+	const uint64_t barsize = identity->resource_size;
+	char respath[96];
+	int mem;
 
-	const uint64_t barsize = gpu_device->regions[reg].size;
+	// The family classifier completes before privilege elevation.  An unknown
+	// PCI ID carries no proven BAR index, register, or map bound and therefore
+	// cannot enter the direct MMIO path.
+	if (!identity->pci_address_valid ||
+		!radeon_mmio_layout_for_family(identity->family, &layout) ||
+		!pci_resource_index_valid(layout.resource_index))
+		die(_("Direct MMIO has no validated layout for the selected Radeon PCI ID"));
 
 	if (!barsize) die(_("Can't get the register area size"));
 
@@ -185,14 +235,18 @@ static void open_pci(struct pci_device *gpu_device) {
 	// MMIO (the STRICT_DEVMEM / IO_STRICT_DEVMEM family), so the legacy path dies;
 	// the resourceN file is the BAR aperture itself.  Its file offset is therefore
 	// BAR-relative (no base_addr term), and MAP_SHARED makes reads hit the device.
-	// Only scalar fields of the freed gpu_device copy are read here.
-	char respath[64];
 	snprintf(respath, sizeof(respath),
 			"/sys/bus/pci/devices/%04x:%02x:%02x.%u/resource%d",
-			gpu_device->domain_16, gpu_device->bus, gpu_device->dev,
-			gpu_device->func, reg);
+			identity->domain, identity->bus, identity->device,
+			identity->function, layout.resource_index);
 
-	int mem = open(respath, O_RDONLY);
+	// Only the exact resource open, mapping, and optional RS480 debugfs read run
+	// with the saved root identity.  DRM discovery, authentication, dynamic
+	// loading, output, and sampling remain under the invoking user.
+	if (privileges_raise_effective())
+		die(_("Cannot elevate privileges for direct MMIO access"));
+
+	mem = open(respath, O_RDONLY);
 	if (mem < 0) die(_("Cannot access GPU registers, are you root?"));
 
 	// RBBM_STATUS and the SRBM window sit at BAR offset 0; the GRBM status
@@ -200,23 +254,22 @@ static void open_pci(struct pci_device *gpu_device) {
 	srbm_area = mmap(NULL, SRBM_MMAP_SIZE, PROT_READ, MAP_SHARED, mem, 0);
 	if (srbm_area == MAP_FAILED) die(_("mmap failed"));
 
-	if (getfamily(gpu_device->device_id) == RS480) {
+	if (layout.status_source == RADEON_STATUS_PCI_RESOURCE_RBBM) {
 		// R300-class engine-busy is RBBM_STATUS (0x0E40) in the offset-0 window
-		// mapped above.  The GRBM window at 0x8000 is an R600+ construct, unused
-		// here, so it is not mapped -- and a resourceN mmap of 0x8000 would fail
-		// outright if the r300 register BAR is smaller than that.
+		// held by srbm_area.  The GRBM window at 0x8000 is an R600+ construct,
+		// so the R300 path leaves it unmapped.  A resourceN mmap of 0x8000 also
+		// fails when the R300 register BAR ends before that offset.
 		getgrbm = getgrbm_pci_r300;
-		// This debugfs file is provided by the steinmarder RS480 candidate-regs
-		// lane, not stock upstream radeon.  When it exists, capture the static
-		// GART/MC observations once before dropping privileges.
+		// The optional debugfs file comes from the steinmarder RS480
+		// candidate-regs lane rather than stock upstream radeon.  Its static
+		// GART/MC observations enter once before privilege drop.
 		init_rs480_gart_observed();
 	} else {
-		// GRBM is an R600 construct, so the family branch above keeps this map
-		// off R300-class parts on capability grounds.  The size check is the
+		// GRBM is an R600 construct, so the RS480 branch keeps the GRBM map off
+		// R300-class parts on capability grounds.  The size check is the
 		// separate guard: a BAR too small to decode 0x8000 maps out of range.
-		// RS482 sysfs reports BAR2 as 0xc0100000-0xc010ffff, 64 KiB, so this
-		// window would fit there; the family branch, not the size, is what
-		// keeps it away.
+		// RS482 sysfs reports BAR2 as 0xc0100000-0xc010ffff, 64 KiB.  The GRBM
+		// window fits that size, while the family capability still rejects it.
 		if (barsize < GRBM_MMAP_BASE + MMAP_SIZE)
 			die(_("Register BAR is smaller than the GRBM window"));
 
@@ -225,13 +278,19 @@ static void open_pci(struct pci_device *gpu_device) {
 		getgrbm = getgrbm_pci;
 	}
 
-	close(mem);
+	if (close(mem))
+		die(_("Failed to close the GPU register resource"));
+	if (privileges_drop_effective())
+		die(_("Failed to drop effective privileges after direct MMIO setup"));
 
 	getsrbm = getsrbm_pci;
 	getsrbm2 = getsrbm2_pci;
+	identity->status_source = layout.status_source;
+	identity->status_register = layout.status_register;
+	identity->resource_index = layout.resource_index;
 }
 
-static void cleanup_pci() {
+static void cleanup_pci(void) {
 	// The DRM path maps neither window, and the R300-class path maps only the
 	// offset-0 one, so each unmap runs against the pointer that was set.
 	if (area)
@@ -241,46 +300,95 @@ static void cleanup_pci() {
 }
 
 #ifdef HAS_DRMGETDEVICE
-static void device_info_drm(int fd, short *bus, unsigned int *device_id);
+static int device_info_drm(int fd, struct radeon_device_identity *identity);
 #endif
+static int device_info_busid(int fd, struct radeon_device_identity *identity);
 int getuint64_null(uint64_t *out);
 
-static int init_drm(int drm_fd) {
+static enum drm_open_result init_drm(int drm_fd,
+		struct radeon_device_identity *identity,
+		bool allow_identity_only) {
 	drmVersionPtr ver = drmGetVersion(drm_fd);
-	int family = UNKNOWN_CHIP;
+	bool backend_supported = false;
 
 	if (!ver) {
 		perror(_("Failed to query driver version"));
 		close(drm_fd);
-		return -1;
+		return DRM_OPEN_FAILED;
 	}
-
-	authenticate_drm(drm_fd);
+	if (!ver->name) {
+		fputs(_("The DRM driver returned no name\n"), stderr);
+		drmFreeVersion(ver);
+		close(drm_fd);
+		return DRM_OPEN_FAILED;
+	}
 
 #ifdef HAS_DRMGETDEVICE
-	// Resolve the family up front so init_radeon can skip probes the
-	// kernel rejects by design on this part (pre-R600 returns -EINVAL
-	// for every RADEON_INFO_READ_REG register).
-	{
-		short bus_unused = -1;
-		unsigned int device_id = 0;
-		device_info_drm(drm_fd, &bus_unused, &device_id);
-		family = getfamily(device_id);
+	// Resolve the family before init_radeon.  Pre-R600 kernels return -EINVAL
+	// for every RADEON_INFO_READ_REG query, so the family gate skips them.
+	if (device_info_drm(drm_fd, identity) &&
+		device_info_busid(drm_fd, identity)) {
+		drmFreeVersion(ver);
+		close(drm_fd);
+		return DRM_OPEN_FAILED;
+	}
+#else
+	if (device_info_busid(drm_fd, identity)) {
+		drmFreeVersion(ver);
+		close(drm_fd);
+		return DRM_OPEN_FAILED;
 	}
 #endif
 
-	if (strcmp(ver->name, "radeon") == 0)
-		init_radeon(drm_fd, ver->version_major, ver->version_minor, family);
-	else if (strcmp(ver->name, "amdgpu") == 0)
+	{
+		const int driver_length = snprintf(identity->drm_driver,
+			sizeof(identity->drm_driver), "%s", ver->name);
+
+		if (driver_length < 0 ||
+			(size_t) driver_length >= sizeof(identity->drm_driver)) {
+			fputs(_("The DRM driver name is too long\n"), stderr);
+			drmFreeVersion(ver);
+			close(drm_fd);
+			return DRM_OPEN_FAILED;
+		}
+	}
+	identity->drm_version_major = ver->version_major;
+	identity->drm_version_minor = ver->version_minor;
+	identity->drm_version_patchlevel = ver->version_patchlevel;
+
+	if (strcmp(ver->name, "radeon") == 0) {
+		backend_supported = true;
+		authenticate_drm(drm_fd);
+		init_radeon(drm_fd, ver->version_major, ver->version_minor,
+			identity->family);
+	} else if (strcmp(ver->name, "amdgpu") == 0) {
 #ifdef ENABLE_AMDGPU
+		backend_supported = true;
+		authenticate_drm(drm_fd);
 		init_amdgpu(drm_fd);
 #else
-		fprintf(stderr, _("amdgpu support is not compiled in (libdrm 2.4.63 required)\n"));
+		fputs(_("amdgpu support is not compiled in (libdrm 2.4.63 required)\n"), stderr);
 #endif
-	else {
+	} else {
 		fprintf(stderr, _("Unsupported driver %s\n"), ver->name);
+	}
+
+	// A forced direct path needs the DRM node only to establish the exact PCI
+	// identity.  A missing sampling backend closes the descriptor while the
+	// validated identity remains available for same-BDF PCI resource binding.
+	if (!backend_supported) {
 		close(drm_fd);
-		drm_fd = -1;
+		drmFreeVersion(ver);
+		return allow_identity_only ? DRM_OPEN_IDENTITY_ONLY : DRM_OPEN_FAILED;
+	}
+
+	if (getgrbm != getuint32_null) {
+		identity->status_source = !strcmp(ver->name, "radeon") ?
+			RADEON_STATUS_RADEON_READ_REG :
+			RADEON_STATUS_AMDGPU_READ_MM_REGISTERS;
+		identity->status_register = GRBM_STATUS;
+		identity->resource_index = RADEON_PCI_RESOURCE_NONE;
+		identity->resource_size = 0;
 	}
 
 /*	printf("Version %u.%u.%u, name %s\n",
@@ -290,35 +398,81 @@ static int init_drm(int drm_fd) {
 		ver->name);*/
 
 	drmFreeVersion(ver);
-	return drm_fd;
+	active_drm_fd = drm_fd;
+	return DRM_OPEN_BACKEND_READY;
 }
 
-static void open_drm_bus(const struct pci_device *dev) {
+static int device_info_busid(int fd, struct radeon_device_identity *identity) {
+	char *bus_id = drmGetBusid(fd);
+	uint16_t domain;
+	uint8_t bus, device, function;
+	struct pci_device *pci_device;
+	int result;
+
+	if (!bus_id) {
+		fputs(_("The DRM device has no PCI bus identity\n"), stderr);
+		return -1;
+	}
+	if (!radeon_parse_pci_bus_id(bus_id, &domain, &bus, &device, &function)) {
+		fputs(_("The DRM device returned an invalid PCI bus identity\n"), stderr);
+		drmFreeBusid(bus_id);
+		return -1;
+	}
+	drmFreeBusid(bus_id);
+
+	result = pci_system_init();
+	if (result) {
+		fprintf(stderr, _("Failed to init pciaccess: %s\n"), strerror(result));
+		return -1;
+	}
+	pci_device = pci_device_find_by_slot(domain, bus, device, function);
+	if (!pci_device || pci_device_probe(pci_device)) {
+		fputs(_("Failed to resolve the DRM device PCI identity\n"), stderr);
+		pci_system_cleanup();
+		return -1;
+	}
+
+	set_pci_identity(identity, domain, bus, device, function,
+		pci_device->vendor_id, pci_device->device_id);
+	pci_system_cleanup();
+	return 0;
+}
+
+static void open_drm_bus(struct radeon_device_identity *identity) {
 	char busid[32];
+	const int resource_index = identity->resource_index;
+	const uint64_t resource_size = identity->resource_size;
 	snprintf(busid, sizeof(busid), "pci:%04x:%02x:%02x.%u",
-			 dev->domain, dev->bus, dev->dev, dev->func);
+			identity->domain, identity->bus, identity->device,
+			identity->function);
 
 	int fd = drmOpen(NULL, busid);
 
-	if (fd >= 0)
-		init_drm(fd);
-	else if (getvram == getuint64_null)
-		// Only worth reporting when no earlier DRM pass bound the
-		// memory counters; on the R300-class fallback path this open
+	if (fd >= 0) {
+		(void) init_drm(fd, identity, false);
+		// PCI discovery owns the pending direct layout.  DRM binds optional
+		// counters and a status reader without discarding that validated BAR.
+		identity->resource_index = resource_index;
+		identity->resource_size = resource_size;
+	} else if (getvram == getuint64_null)
+		// Only worth reporting when no established DRM pass bound the
+		// memory counters; on the R300-class fallback path the bus open
 		// can fail after VRAM/GTT already bound through find_drm.
-		printf(_("Failed to open DRM node, no VRAM support.\n"));
+		fputs(_("Failed to open DRM node, no VRAM support.\n"), stderr);
 }
 
-static int open_drm_path(const char *path) {
+static enum drm_open_result open_drm_path(const char *path,
+		struct radeon_device_identity *identity,
+		bool allow_identity_only) {
 	int fd = open(path, O_RDWR);
 
 	if (fd >= 0)
-		fd = init_drm(fd);
+		return init_drm(fd, identity, allow_identity_only);
 	else
 		fprintf(stderr, _("Failed to open %s: %s\n"),
 			path, strerror(errno));
 
-	return fd;
+	return DRM_OPEN_FAILED;
 }
 
 #ifdef DRM_DEVICE_GET_PCI_REVISION
@@ -330,7 +484,7 @@ static int open_drm_path(const char *path) {
 #endif
 
 #ifdef DRM_BUS_PCI
-static int find_drm(short bus, short *device_bus, unsigned int *device_id) {
+static int find_drm(short bus, struct radeon_device_identity *identity) {
 	drmDevicePtr *devs;
 	int count, i, j, fd = -1;
 
@@ -347,24 +501,38 @@ static int find_drm(short bus, short *device_bus, unsigned int *device_id) {
 
 	if ((count = DRMGETDEVICES(devs, count)) < 0) {
 		drmError(-count, _("Failed to get DRM devices"));
+		free(devs);
 		return 1;
 	}
 
 	for (i = 0; i < count; i++) {
+		struct radeon_device_identity discovered = *identity;
+
 		if (devs[i]->bustype != DRM_BUS_PCI ||
 			devs[i]->deviceinfo.pci->vendor_id != VENDOR_AMD ||
 			(bus >= 0 && bus != devs[i]->businfo.pci->bus))
 			continue;
+		set_pci_identity(&discovered, devs[i]->businfo.pci->domain,
+			devs[i]->businfo.pci->bus, devs[i]->businfo.pci->dev,
+			devs[i]->businfo.pci->func,
+			devs[i]->deviceinfo.pci->vendor_id,
+			devs[i]->deviceinfo.pci->device_id);
+		if (discovered.family == UNKNOWN_CHIP)
+			continue;
 
 		// try render node first, as it does not require to drop master
 		for (j = DRM_NODE_MAX - 1; j >= 0; j--) {
+			struct radeon_device_identity candidate = discovered;
+
 			if (!(1 << j & devs[i]->available_nodes))
 				continue;
-			if ((fd = open_drm_path(devs[i]->nodes[j])) < 0)
-				continue;
 
-			*device_bus = devs[i]->businfo.pci->bus;
-			*device_id = devs[i]->deviceinfo.pci->device_id;
+			if (open_drm_path(devs[i]->nodes[j], &candidate, false) !=
+				DRM_OPEN_BACKEND_READY)
+				continue;
+			fd = active_drm_fd;
+
+			*identity = candidate;
 			break;
 		}
 
@@ -379,24 +547,28 @@ static int find_drm(short bus, short *device_bus, unsigned int *device_id) {
 #endif
 
 #ifdef HAS_DRMGETDEVICE
-static void device_info_drm(int fd, short *bus, unsigned int *device_id) {
+static int device_info_drm(int fd, struct radeon_device_identity *identity) {
 	drmDevicePtr dev;
 	int err;
 
 	if ((err = DRMGETDEVICE(fd, &dev))) {
 		drmError(err, _("Failed to get device info"));
-		return;
+		return -1;
 	}
 
 	if (dev->bustype != DRM_BUS_PCI) {
 		fprintf(stderr, _("Unsupported bus type %d\n"),
 			dev->bustype);
-		return;
+		drmFreeDevice(&dev);
+		return -1;
 	}
 
-	*bus = dev->businfo.pci->bus;
-	*device_id = dev->deviceinfo.pci->device_id;
+	set_pci_identity(identity, dev->businfo.pci->domain,
+		dev->businfo.pci->bus, dev->businfo.pci->dev,
+		dev->businfo.pci->func, dev->deviceinfo.pci->vendor_id,
+		dev->deviceinfo.pci->device_id);
 	drmFreeDevice(&dev);
+	return 0;
 }
 #endif
 
@@ -405,24 +577,22 @@ static void device_info_drm(int fd, short *bus, unsigned int *device_id) {
 int getuint32_null(uint32_t *out) { UNUSED(out); return -1; }
 int getuint64_null(uint64_t *out) { UNUSED(out); return -1; }
 
-void init_pci(const char *path, short *bus, unsigned int *device_id, const unsigned char forcemem) {
-	short device_bus = -1;
+void init_pci(const char *path, short *bus,
+		struct radeon_device_identity *identity,
+		const unsigned char forcemem) {
 	int err = 1;
+
+	radeon_device_identity_init(identity);
 	getgrbm = getsclk = getmclk = getuint32_null;
 	getsrbm = getsrbm2 = getuint32_null;
 	getvram = getgtt = getuint64_null;
 
 	if (path) {
-		int fd = open_drm_path(path);
+		enum drm_open_result drm_result = open_drm_path(path, identity,
+			forcemem != 0);
 
-		if (fd < 0 || getgrbm == getuint32_null)
+		if (drm_result == DRM_OPEN_FAILED)
 			exit(1);
-
-#ifdef HAS_DRMGETDEVICE
-		device_info_drm(fd, &device_bus, device_id);
-#else
-		fprintf(stderr, _("DRM device detection is not compiled in (libdrm 2.4.66 required)\n"));
-#endif
 		err = 0;
 	}
 
@@ -430,46 +600,52 @@ void init_pci(const char *path, short *bus, unsigned int *device_id, const unsig
 	// video card, picking the correct PCI bus if provided.
 #ifdef DRM_BUS_PCI
 	if (!forcemem && err)
-		err = find_drm(*bus, &device_bus, device_id);
+		err = find_drm(*bus, identity);
 #endif
 
 	// This is the fallback method for older libdrm that doesn't
 	// have drmGetDevices, operating systems where drmGetDevices
 	// is not implemented, older radeon kernel driver without GRBM
 	// readings, RS4xx/r300-class lanes where DRM read-reg rejects
-	// RBBM_STATUS, AMD Catalyst driver or when no driver is loaded.
-	if (getgrbm == getuint32_null) {
-		struct pci_device pci_dev;
-		memset(&pci_dev, 0, sizeof(struct pci_device));
-		err = find_pci(*bus, &pci_dev);
+	// RBBM_STATUS, or when no driver is loaded.
+	if (radeon_direct_status_path_required(forcemem,
+			getgrbm != getuint32_null)) {
+		err = find_pci(*bus, identity);
 
 		if (!err) {
-			// DRM support for VRAM
-			open_drm_bus(&pci_dev);
+			// A prior DRM pass owns its descriptor and memory counters.  The
+			// direct-path search opens a DRM node only when that pass did not run.
+			if (!path && active_drm_fd < 0 && getvram == getuint64_null)
+				open_drm_bus(identity);
 
 			if (forcemem)
-				printf(_("Forcing the direct MMIO register path.\n"));
+				fputs(_("Forcing the direct MMIO register path.\n"), stderr);
 
 			if (forcemem || getgrbm == getuint32_null)
-				open_pci(&pci_dev);
-
-			device_bus = pci_dev.bus;
-			*device_id = pci_dev.device_id;
+				open_pci(identity);
 		}
 	}
 
 	if (err)
 		die(_("Can't find Radeon cards"));
 
-	*bus = device_bus;
+	if (!identity->pci_address_valid)
+		die(_("The selected Radeon device has no PCI identity"));
+
+	*bus = identity->bus;
 }
 
-void cleanup() {
+void cleanup(void) {
 	cleanup_pci();
 
 #ifdef ENABLE_AMDGPU
 	cleanup_amdgpu();
 #endif
+
+	if (active_drm_fd >= 0) {
+		close(active_drm_fd);
+		active_drm_fd = -1;
+	}
 }
 
 int getfamily(unsigned int id) {
@@ -481,7 +657,7 @@ int getfamily(unsigned int id) {
 		#undef CHIPSET
 	}
 
-	return 0;
+	return UNKNOWN_CHIP;
 }
 
 void initbits(int fam) {
@@ -490,13 +666,11 @@ void initbits(int fam) {
 
 	if (fam == RS480) {
 		// R300-class RBBM_STATUS (0x0E40) engine-busy layout, shared by
-		// RS400/RS480/RS482/RS485.  Every bit position below is the
+		// RS400/RS480/RS482/RS485.  Every assigned bit position is the
 		// kernel's own decode (r300d.h S_000E40_* field macros).  Map the
 		// R300 blocks onto radeontop's gauges and give the blocks with no
 		// R600 analogue (the PM4 command stream and the 2D engine pair)
-		// their own lanes; bits with no R300 analogue stay zero.  PB_BUSY
-		// (bit 24) carries no kernel-documented block meaning and stays
-		// unmapped.
+		// their own lanes; bits with no R300 analogue stay zero.
 		bits.gui = (1U << 31);  // GUI_ACTIVE -- any 2D/3D engine running
 		bits.vgt = (1U << 20);  // VAP_BUSY -- vertex assembly front-end
 		bits.pa  = (1U << 26);  // GA_BUSY -- geometry/primitive setup
@@ -505,17 +679,13 @@ void initbits(int fam) {
 		bits.e2  = (1U << 17);  // E2_BUSY -- the 2D draw engine
 		bits.rb2d = (1U << 18) | (1U << 27);  // RB2D|CBA2D -- 2D render backend
 		bits.cf  = (1U << 14);  // CF_PIPE_BUSY -- the command/clause fetch pipe
-		// A raw RBBM_STATUS histogram under a sustained load shows the busy
-		// word saturating at GUI|GA|CP_CMDSTRM|ENG_EV|CF_PIPE -- each of
-		// those now has its own lane (gpu|pa|cp|ee|cf).  The kernel decode
-		// also names RE_BUSY (21), TAM|TDM|TIM (22|23|25), and RB3D_BUSY
-		// (19), and r300d.h holds those field positions.  The RS482 histogram
-		// showed them clear throughout, so their exposure on this part is
-		// unconfirmed and a gauge would render a number the observation does
-		// not support.  Those lanes stay masked off pending a higher-rate
-		// sampler; the per-block cache status registers in the 0x4xxx window
-		// are the readable alternative and belong to the gated lane, not a
-		// poller.
+		// A retained RS482 RBBM_STATUS histogram observes GUI, GA,
+		// CP_CMDSTRM, ENG_EV, CF_PIPE, and VAP assertions under its named
+		// loads and sample rates.  The same finite record does not observe
+		// RB3D, RE, TAM, TDM, PB, or TIM.  Those lanes stay masked because a
+		// permanent zero would overstate the bounded non-observation.  Active
+		// reads in the GA and ZB 0x4xxx blocks remain probe-only: an RS482
+		// read of 0x42d0 under GUI activity deep-wedged the host.
 		bits.sc = bits.ta = bits.cb = bits.db = 0;
 		bits.tc = bits.sx = bits.sh = bits.spi = bits.smx = bits.cr = 0;
 		bits.uvd = 0;   // RS482 has no UVD -- the 3D pipe is the only decoder

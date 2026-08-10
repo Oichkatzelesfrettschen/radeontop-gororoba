@@ -22,7 +22,7 @@
 #include <string.h>
 
 // A signal handler may touch only a volatile sig_atomic_t, and both output
-// modes poll this one, so an interrupt reaches the same orderly shutdown that a
+// modes poll terminate_requested, so an interrupt reaches the same orderly shutdown that a
 // line limit or a UI quit does: request stop, join, then unmap.
 volatile sig_atomic_t terminate_requested = 0;
 
@@ -90,14 +90,14 @@ static void help(const char * const me, const unsigned int ticks,
 		const unsigned int dumpinterval, const int status) {
 	FILE * const out = status ? stderr : stdout;
 
-	fprintf(out, _("\n\tRadeonTop for R600 and above, plus R300-class IGPs (RS4xx, use -m).\n\n"
-		"\tUsage: %s [-chmv] [-b bus] [-d file] [-i seconds] [-l limit] [-p device] [-t ticks]\n\n"
-		"-b --bus 3		Pick card from this PCI bus (hexadecimal)\n"
+	fprintf(out, _("\n\tRadeonTop for R600 and later, plus R300-class integrated RS4xx GPUs.\n\n"
+		"\tUsage: %s [-cThmv] [--dither-seed seed] [-b bus] [-d file] [-i seconds] [-l limit] [-p device] [-t ticks]\n\n"
+		"-b --bus 3		Pick card from the selected PCI bus (hexadecimal)\n"
 		"-c --color		Enable colors\n"
-		"-d --dump file		Dump data to this file, - for stdout\n"
+		"-d --dump file		Dump data to the named file, - for stdout\n"
 		"-i --dump-interval 1	Number of seconds between dumps (default %u)\n"
 		"-l --limit 3		Quit after dumping N lines, default forever\n"
-		"-m --mem		Force the PCI sysfs resourceN MMIO path, for the proprietary driver\n"
+		"-m --mem		Force the validated PCI sysfs resourceN MMIO path\n"
 		"-p --path device	Open DRM device node by path\n"
 		"-t --ticks 50		Samples per second (default %u)\n"
 		"-T --transparency	Enable transparency\n"
@@ -105,28 +105,22 @@ static void help(const char * const me, const unsigned int ticks,
 		"			so a workload periodic at a harmonic of the sample\n"
 		"			rate meets a moving phase.  Omit for the exact grid.\n"
 		"\n"
-		"-h --help		Show this help\n"
+		"-h --help		Show usage help\n"
 		"-v --version		Show the version\n"),
 		me, dumpinterval, ticks);
 	exit(status);
 }
 
-// The binary runs setuid root on installations that need MMIO register access,
-// so a privilege transition that silently fails leaves the wrong credentials in
-// force for everything after it.  glibc marks the setuid family
-// warn_unused_result under _FORTIFY_SOURCE, and each call site here checks both
+// A setuid-root deployment can supply MMIO register access, so a privilege
+// transition that silently fails leaves the wrong credentials in force for
+// everything after it.  glibc marks the setuid family
+// warn_unused_result under _FORTIFY_SOURCE, and each call site checks both
 // the return value and the resulting effective id, because the id is the
 // property that matters.
-static void drop_euid(void) {
-	const uid_t uid = getuid();
-
-	if (seteuid(uid) || geteuid() != uid)
-		die(_("Failed to drop effective privileges"));
-}
-
 int main(int argc, char **argv) {
 	// Temporarily drop privileges to do option parsing, etc.
-	drop_euid();
+	if (privileges_drop_effective())
+		die(_("Failed to drop effective privileges"));
 
 	const unsigned int default_ticks = 120;
 	const unsigned int default_dumpinterval = 1;
@@ -136,7 +130,6 @@ int main(int argc, char **argv) {
 	unsigned char transparency = 0;
 	short bus = -1;
 	unsigned char forcemem = 0;
-	unsigned int device_id = 0;
 	unsigned int limit = 0;
 	char *dump = NULL;
 	unsigned int dumpinterval = default_dumpinterval;
@@ -144,6 +137,7 @@ int main(int argc, char **argv) {
 	// Zero keeps every sample on its exact grid point, which is the default and
 	// what makes two runs of one workload directly comparable.
 	uint64_t dither_seed = 0;
+	struct radeon_device_identity identity;
 
 	// Translations
 #ifdef ENABLE_NLS
@@ -152,38 +146,48 @@ int main(int argc, char **argv) {
 	textdomain("radeontop");
 #endif
 
-	// A long-only option takes a value above the character range, so getopt_long
+	// A long-only option takes a value outside the character range, so getopt_long
 	// returns it without colliding with a short option letter.
-	enum { OPT_DITHER_SEED = 0x100 };
+	enum {
+		OPT_DITHER_SEED = 0x100,
+		INFORMATION_NONE,
+		INFORMATION_HELP,
+		INFORMATION_VERSION
+	};
+	int information_request = INFORMATION_NONE;
 
 	// opts
 	const struct option opts[] = {
-		{"dither-seed", 1, 0, OPT_DITHER_SEED},
-		{"bus", 1, 0, 'b'},
-		{"color", 0, 0, 'c'},
-		{"dump", 1, 0, 'd'},
-		{"dump-interval", 1, 0, 'i'},
-		{"help", 0, 0, 'h'},
-		{"limit", 1, 0, 'l'},
-		{"mem", 0, 0, 'm'},
-		{"path", 1, 0, 'p'},
-		{"ticks", 1, 0, 't'},
-		{"transparency", 0, 0, 'T'},
-		{"version", 0, 0, 'v'},
-		{0, 0, 0, 0}
+		{"dither-seed", required_argument, NULL, OPT_DITHER_SEED},
+		{"bus", required_argument, NULL, 'b'},
+		{"color", no_argument, NULL, 'c'},
+		{"dump", required_argument, NULL, 'd'},
+		{"dump-interval", required_argument, NULL, 'i'},
+		{"help", no_argument, NULL, 'h'},
+		{"limit", required_argument, NULL, 'l'},
+		{"mem", no_argument, NULL, 'm'},
+		{"path", required_argument, NULL, 'p'},
+		{"ticks", required_argument, NULL, 't'},
+		{"transparency", no_argument, NULL, 'T'},
+		{"version", no_argument, NULL, 'v'},
+		{NULL, 0, NULL, 0}
 	};
 
 	while (1) {
-		int c = getopt_long(argc, argv, "b:cTd:hi:l:mp:t:v", opts, NULL);
+		// A leading plus keeps argv in its original order and stops at the first
+		// operand.  The CLI accepts no operands, so the post-parse check rejects
+		// both an operand before options and one after options.
+		int c = getopt_long(argc, argv, "+b:cTd:hi:l:mp:t:v", opts, NULL);
 		if (c == -1) break;
 
 		switch(c) {
 			case 'h':
-				help(argv[0], default_ticks, default_dumpinterval, 0);
+				if (information_request == INFORMATION_NONE)
+					information_request = INFORMATION_HELP;
 			break;
 			case '?':
 				// getopt_long has already named the offending option
-				// on stderr; the usage text follows it there.
+				// on stderr; the usage text follows on the same stream.
 				help(argv[0], default_ticks, default_dumpinterval, 1);
 			break;
 			case 't':
@@ -204,7 +208,8 @@ int main(int argc, char **argv) {
 				bus = (short) parse_count(optarg, _("bus number"), 0, 0xff, 16);
 			break;
 			case 'v':
-				version();
+				if (information_request == INFORMATION_NONE)
+					information_request = INFORMATION_VERSION;
 			break;
 			case 'l':
 				limit = parse_count(optarg, _("dump limit"), 0, UINT_MAX, 10);
@@ -227,25 +232,37 @@ int main(int argc, char **argv) {
 		}
 	}
 
-	// init (regain privileges for bus initialization and ultimately drop them afterwards)
-	// An unprivileged run cannot regain root and reports EPERM, and the DRM
-	// and xcb paths still work without it, so init_pci reports whichever
-	// access it cannot obtain.  Any other failure is unexpected.
-	if (seteuid(0) && errno != EPERM)
-		die(_("Failed to regain privileges"));
+	if (optind < argc) {
+		fprintf(stderr, _("Unexpected operand '%s'\n"), argv[optind]);
+		help(argv[0], default_ticks, default_dumpinterval, 1);
+	}
+	if (information_request == INFORMATION_HELP)
+		help(argv[0], default_ticks, default_dumpinterval, 0);
+	if (information_request == INFORMATION_VERSION)
+		version();
 
-	init_pci(path, &bus, &device_id, forcemem);
-	// after init_pci we can assume that bus/device_id exists (otherwise it would die())
+#ifdef ENABLE_NLS
+	// Dump records use a period as their decimal separator.  The selection runs
+	// before the collector thread exists, so the process-global locale remains
+	// immutable throughout concurrent collection.
+	if (dump && !setlocale(LC_NUMERIC, "C"))
+		die(_("Failed to select the capture numeric locale"));
+#endif
+
+	// DRM discovery and authentication run unprivileged.  init_pci raises the
+	// saved effective identity only around a validated direct BAR mapping.
+	init_pci(path, &bus, &identity, forcemem);
 
 	// Drop permanently before the collector, the UI, and the dump writer run.
-	// setuid moves the saved id too, so a failure here would leave every one
-	// of them able to return to root.
-	if (setuid(getuid()) || geteuid() != getuid())
+	// setresuid moves the real, effective, and saved ids together, so a failure
+	// during the permanent drop would leave those components able to return
+	// to root.
+	if (privileges_drop_permanently())
 		die(_("Failed to drop privileges"));
 
-	const int family = getfamily(device_id);
-	if (!family)
-		fprintf(stderr, _("Unknown Radeon card. <= R500 won't work, new cards might.\n"));
+	const int family = identity.family;
+	if (family == UNKNOWN_CHIP)
+		die(_("Unsupported Radeon PCI ID: no validated family model"));
 
 	const char * const cardname = family_str[family];
 
@@ -263,7 +280,28 @@ int main(int argc, char **argv) {
 	const struct collector_backend backend = collector_backend_from_device();
 	const struct engine_masks masks = collector_masks_from_bits();
 	const struct collector_clock clock_ops = collector_monotonic_clock_ops(&clock);
+	struct radeontop_capture_metadata capture_metadata;
+	const struct radeontop_capture_metadata *capture = NULL;
 	struct collector collector;
+
+	if (dump) {
+		const struct radeontop_build_identity build_identity = {
+			VERSION,
+			RADEONTOP_SOURCE_COMMIT,
+			RADEONTOP_SOURCE_STATE,
+			RADEONTOP_SOURCE_SHA256,
+			RADEONTOP_SOURCE_MANIFEST,
+			RADEONTOP_BUILD_MANIFEST_SHA256,
+			RADEONTOP_BUILD_MANIFEST
+		};
+
+		if (radeontop_capture_metadata_init(&capture_metadata, &build_identity,
+				cardname,
+				argc, argv, &identity, &config, vramsize, gttsize,
+				sclk_max, mclk_max))
+			die(_("Failed to initialize capture provenance"));
+		capture = &capture_metadata;
+	}
 
 	if (collector_init(&collector, &config, &backend, &masks, &clock_ops))
 		die(_("Failed to initialize the collector"));
@@ -276,14 +314,20 @@ int main(int argc, char **argv) {
 	int status;
 
 	if (dump)
-		status = dumpdata(&collector, &masks, dump, limit, bus);
+		status = dumpdata(&collector, &masks, capture, dump, limit, bus);
 	else
 		status = present(&collector, &masks, cardname, color, transparency, bus);
 
 	collector_request_stop(&collector);
-	if (collector_join(&collector))
+	if (collector_join(&collector)) {
+		// A failed join leaves worker termination unproven.  Process exit owns
+		// cleanup in the join-failure branch; unmapping or destroying synchronization state
+		// could race a live hardware read.
+		fputs(_("Failed to join the collector thread.\n"), stderr);
+		return 1;
+	}
+	if (collector_destroy(&collector))
 		status = 1;
-	collector_destroy(&collector);
 	collector_monotonic_clock_destroy(&clock);
 
 	cleanup();

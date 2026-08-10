@@ -35,7 +35,10 @@ jobs:
           - lane: full
             options: nls=1 xcb=1 amdgpu=1
     steps:
-      - uses: actions/checkout@v4
+      # actions/checkout v7.0.1 supplies this immutable revision.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
 
       - name: Install build dependencies
         run: |
@@ -69,7 +72,10 @@ jobs:
     name: static analysis
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # actions/checkout v7.0.1 supplies this immutable revision.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
 
       - name: Install analysis dependencies
         run: |
@@ -77,7 +83,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             pkgconf gettext libpciaccess-dev libdrm-dev \
             libncurses-dev libxcb1-dev libxcb-dri2-0-dev \
-            clang cppcheck shellcheck
+            appstream clang cppcheck shellcheck sparse
 
       # -Wconditional-uninitialized reports a read that is defined on some paths
       # only.  It found the ticks.c uvd and vce reads that gcc at -Os did not.
@@ -96,29 +102,45 @@ jobs:
             --suppress=missingIncludeSystem \
             -Iinclude ./*.c
 
+      - name: Sparse external-symbol analysis
+        env:
+          CFLAGS: -O2 -Wall -Wextra -Werror -U_FORTIFY_SOURCE
+        run: |
+          make clean
+          make plain=1 CC=cgcc
+
+      - name: XCB helper ABI
+        run: ./tools/check-xcb-helper-abi.sh --self-test libradeontop_xcb.so
+
       - name: shellcheck
-        run: shellcheck ./*.sh
+        run: shellcheck ./*.sh ./tools/*.sh
+
+      - name: AppStream metadata
+        run: appstreamcli validate --no-net --pedantic radeontop.metainfo.xml
 
       # Both family-enum tables must name every chipset the PCI ID headers
       # declare, and familycheck.sh exits nonzero when one does not.
       - name: family enum tables
-        run: ./familycheck.sh
+        run: ./familycheck.sh --self-test
 
-  collector:
+  unit:
     name: collector integrity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # actions/checkout v7.0.1 supplies this immutable revision.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
 
       - name: Install analysis dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends clang
+          sudo apt-get install -y --no-install-recommends \
+            clang pkgconf libpciaccess-dev libdrm-dev
 
-      # The collector test needs no GPU, no ncurses, no libdrm, and no
-      # libpciaccess: the backend and the clock are injected, so the arithmetic,
-      # the schedule, the failure semantics, and the shutdown path are all
-      # observable from a scripted fake and a virtual clock.
+      # The suites need no GPU or device access. They cover the capture format,
+      # collector arithmetic and scheduling, full explicit-path selection, MMIO
+      # admission and clock units, and the strict RS480 observation parser.
       - name: Unit tests, gcc
         run: make check
 
@@ -153,17 +175,34 @@ jobs:
     name: command-line contracts
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # actions/checkout v7.0.1 supplies this immutable revision.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
 
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
+            asciidoc docbook-xml python3-venv \
             pkgconf gettext libpciaccess-dev libdrm-dev \
             libncurses-dev libxcb1-dev libxcb-dri2-0-dev
 
+      # AsciiDoc 10.2.0 evaluates one table separator as a non-raw Python
+      # string and emits SyntaxWarning diagnostics on current Python.  The
+      # 10.2.1 renderer uses a raw string and keeps the zero-diagnostic contract.
+      - name: Pin the diagnostic-clean man renderer
+        run: |
+          python3 -m venv "$RUNNER_TEMP/asciidoc"
+          "$RUNNER_TEMP/asciidoc/bin/pip" install \
+            --disable-pip-version-check --no-deps asciidoc==10.2.1
+          echo "$RUNNER_TEMP/asciidoc/bin" >> "$GITHUB_PATH"
+
       - name: Build
         run: make plain=1 VERSION=0.0.rci.gffffffffffff
+
+      - name: Option and documentation parity
+        run: make check-cli-docs plain=1 VERSION=0.0.rci.gffffffffffff
 
       # Each case exercises an option boundary that a runner reaches without a
       # GPU, because option parsing precedes every device access.
@@ -179,6 +218,12 @@ jobs:
             test ! -s /tmp/err || fail "$opt wrote to stderr"
           done
 
+          for seed in 1 4294967295; do
+            ./radeontop --dither-seed "$seed" --help > /tmp/out 2> /tmp/err || \
+              fail "valid dither seed $seed was rejected"
+            test ! -s /tmp/err || fail "valid dither seed $seed wrote to stderr"
+          done
+
           # An unknown option exits nonzero with its diagnostic on stderr.
           if ./radeontop --no-such-option > /tmp/out 2> /tmp/err; then
             fail "unknown option exited 0"
@@ -186,8 +231,24 @@ jobs:
           test ! -s /tmp/out || fail "unknown option wrote to stdout"
           grep -q 'no-such-option' /tmp/err || fail "unknown option unnamed"
 
+          for arg_order in before after; do
+            if test "$arg_order" = before; then
+              set -- unexpected-operand --help
+            else
+              set -- --help unexpected-operand
+            fi
+            if ./radeontop "$@" > /tmp/out 2> /tmp/err; then
+              fail "$arg_order-option operand was accepted"
+            fi
+            grep -q "Unexpected operand 'unexpected-operand'" /tmp/err || \
+              fail "$arg_order-option operand was not identified"
+          done
+
           # A rejected argument exits nonzero and names the accepted range.
-          for arg in "-t 0" "-t -1" "-t abc" "-i 0" "-b zz" "-b 100" "-b -1"; do
+          for arg in "-t 0" "-t -1" "-t abc" "-t 1000001" \
+            "-i 0" "-i 86401" "-b zz" "-b 100" "-b -1" \
+            "--dither-seed 0" "--dither-seed abc" \
+            "--dither-seed 4294967296"; do
             # shellcheck disable=SC2086
             if ./radeontop $arg -l 1 -d - > /tmp/out 2> /tmp/err; then
               fail "'$arg' was accepted"
