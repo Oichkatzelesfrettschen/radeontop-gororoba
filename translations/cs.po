@@ -10,6 +10,7 @@ msgstr ""
 "POT-Creation-Date: 2014-04-23 15:04+0300\n"
 "PO-Revision-Date: 2017-09-12 15:59+0000\n"
 "Last-Translator: Pavel Borecki <Unknown>\n"
+"Language: cs\n"
 "Language-Team: Czech <cs@li.org>\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -141,7 +142,7 @@ msgstr "Engine událostí %6.2f%%"
 
 #: ui.c:158
 #, c-format
-msgid "Vertex Grouper + Tesselator %6.2f%%"
+msgid "Vertex Grouper + Tessellator %6.2f%%"
 msgstr "Obvody pro seskupování vertexů a teselaci %6.2f%%"
 
 #: ui.c:166

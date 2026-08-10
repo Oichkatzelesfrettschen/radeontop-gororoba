@@ -120,9 +120,9 @@ void init_amdgpu(int fd) {
 				drmError(ret, _("Failed to get memory clock"));
 		}
 	} else
-		fprintf(stderr, _("Clock frequency reporting is disabled (amdgpu kernel driver 3.11.0 required)\n"));
+		fputs(_("Clock frequency reporting is disabled (amdgpu kernel driver 3.11.0 required)\n"), stderr);
 #else
-	fprintf(stderr, _("Clock frequency reporting is not compiled in (libdrm 2.4.79 required)\n"));
+	fputs(_("Clock frequency reporting is not compiled in (libdrm 2.4.79 required)\n"), stderr);
 #endif
 
 	struct drm_amdgpu_info_vram_gtt vram_gtt;

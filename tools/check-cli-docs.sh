@@ -28,7 +28,10 @@ scratch=$(mktemp -d)
 cleanup() {
 	rm -rf -- "$scratch"
 }
-trap cleanup 0 1 2 15
+trap cleanup 0
+trap 'exit 129' 1
+trap 'exit 130' 2
+trap 'exit 143' 15
 
 export LC_ALL=C
 

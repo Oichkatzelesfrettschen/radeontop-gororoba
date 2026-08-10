@@ -147,7 +147,7 @@ resolution, and the two backends cannot be separated from its output.
 ### Lane labels
 
 Three UI labels are inherited from the R600 lane set and overstate what the R300
-field names establish. `vgt` renders as "Vertex Grouper + Tesselator" while the
+field names establish. `vgt` renders as "Vertex Grouper + Tessellator" while the
 R300 field is `VAP_BUSY`; `cf` renders as "Cmd Fetch" while the field names only
 `CF_PIPE`; `rb2d` renders as "2D Backend" for a two-bit union. The precise
 R300-side names are `VAP`, `CF pipe`, and `RB2D or CBA2D`, and the rendered

@@ -323,7 +323,7 @@ int main(int argc, char **argv) {
 		// A failed join leaves worker termination unproven.  Process exit owns
 		// cleanup in the join-failure branch; unmapping or destroying synchronization state
 		// could race a live hardware read.
-		fprintf(stderr, _("Failed to join the collector thread.\n"));
+		fputs(_("Failed to join the collector thread.\n"), stderr);
 		return 1;
 	}
 	if (collector_destroy(&collector))

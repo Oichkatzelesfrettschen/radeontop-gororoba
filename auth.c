@@ -49,7 +49,7 @@ void authenticate_drm(int fd) {
 	if (drmAuthMagic(fd, magic) == 0) {
 		if (drmDropMaster(fd)) {
 			perror(_("Failed to drop DRM master"));
-			fprintf(stderr, _("\nWARNING: other DRM clients will crash on VT switch while radeontop is running!\npress ENTER to continue\n"));
+			fputs(_("\nWARNING: other DRM clients will crash on VT switch while radeontop is running!\npress ENTER to continue\n"), stderr);
 			fgetc(stdin);
 		}
 		return;

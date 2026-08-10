@@ -10,6 +10,7 @@ msgstr ""
 "POT-Creation-Date: 2014-04-23 15:04+0300\n"
 "PO-Revision-Date: 2020-03-20 02:51+0000\n"
 "Last-Translator: Bengt Lüers <Bengt.Lueers@gmail.com>\n"
+"Language: de\n"
 "Language-Team: German <de@li.org>\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -138,8 +139,8 @@ msgstr "Ereignisverarbeitung %6.2f%%"
 
 #: ui.c:158
 #, c-format
-msgid "Vertex Grouper + Tesselator %6.2f%%"
-msgstr "Vertex-Gruppierer und Tesselator %6.2f%%"
+msgid "Vertex Grouper + Tessellator %6.2f%%"
+msgstr "Vertex-Gruppierer und Tessellator %6.2f%%"
 
 #: ui.c:166
 #, c-format

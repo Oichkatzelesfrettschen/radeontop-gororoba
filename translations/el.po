@@ -10,6 +10,7 @@ msgstr ""
 "POT-Creation-Date: 2014-04-23 15:04+0300\n"
 "PO-Revision-Date: 2015-12-29 19:14+0000\n"
 "Last-Translator: klapeto <yiannispana@hotmail.com>\n"
+"Language: el\n"
 "Language-Team: Greek <el@li.org>\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -134,7 +135,7 @@ msgstr ""
 
 #: ui.c:158
 #, c-format
-msgid "Vertex Grouper + Tesselator %6.2f%%"
+msgid "Vertex Grouper + Tessellator %6.2f%%"
 msgstr ""
 
 #: ui.c:166

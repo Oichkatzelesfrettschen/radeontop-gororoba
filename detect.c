@@ -317,7 +317,7 @@ static enum drm_open_result init_drm(int drm_fd,
 		return DRM_OPEN_FAILED;
 	}
 	if (!ver->name) {
-		fprintf(stderr, _("The DRM driver returned no name\n"));
+		fputs(_("The DRM driver returned no name\n"), stderr);
 		drmFreeVersion(ver);
 		close(drm_fd);
 		return DRM_OPEN_FAILED;
@@ -346,7 +346,7 @@ static enum drm_open_result init_drm(int drm_fd,
 
 		if (driver_length < 0 ||
 			(size_t) driver_length >= sizeof(identity->drm_driver)) {
-			fprintf(stderr, _("The DRM driver name is too long\n"));
+			fputs(_("The DRM driver name is too long\n"), stderr);
 			drmFreeVersion(ver);
 			close(drm_fd);
 			return DRM_OPEN_FAILED;
@@ -367,7 +367,7 @@ static enum drm_open_result init_drm(int drm_fd,
 		authenticate_drm(drm_fd);
 		init_amdgpu(drm_fd);
 #else
-		fprintf(stderr, _("amdgpu support is not compiled in (libdrm 2.4.63 required)\n"));
+		fputs(_("amdgpu support is not compiled in (libdrm 2.4.63 required)\n"), stderr);
 #endif
 	} else {
 		fprintf(stderr, _("Unsupported driver %s\n"), ver->name);
@@ -410,11 +410,11 @@ static int device_info_busid(int fd, struct radeon_device_identity *identity) {
 	int result;
 
 	if (!bus_id) {
-		fprintf(stderr, _("The DRM device has no PCI bus identity\n"));
+		fputs(_("The DRM device has no PCI bus identity\n"), stderr);
 		return -1;
 	}
 	if (!radeon_parse_pci_bus_id(bus_id, &domain, &bus, &device, &function)) {
-		fprintf(stderr, _("The DRM device returned an invalid PCI bus identity\n"));
+		fputs(_("The DRM device returned an invalid PCI bus identity\n"), stderr);
 		drmFreeBusid(bus_id);
 		return -1;
 	}
@@ -427,7 +427,7 @@ static int device_info_busid(int fd, struct radeon_device_identity *identity) {
 	}
 	pci_device = pci_device_find_by_slot(domain, bus, device, function);
 	if (!pci_device || pci_device_probe(pci_device)) {
-		fprintf(stderr, _("Failed to resolve the DRM device PCI identity\n"));
+		fputs(_("Failed to resolve the DRM device PCI identity\n"), stderr);
 		pci_system_cleanup();
 		return -1;
 	}

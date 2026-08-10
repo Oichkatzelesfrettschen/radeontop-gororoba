@@ -150,9 +150,9 @@ void init_radeon(int fd, int drm_major, int drm_minor, int family) {
 		} else
 			drmError(ret, _("Failed to get memory clock"));
 	} else
-		fprintf(stderr, _("GPU usage reporting via libdrm is disabled (radeon kernel driver 2.42.0 required), attempting memory path\n"));
+		fputs(_("GPU usage reporting via libdrm is disabled (radeon kernel driver 2.42.0 required), attempting memory path\n"), stderr);
 #else
-	fprintf(stderr, _("GPU usage reporting via libdrm is not compiled in (libdrm 2.4.71 required), attempting memory path\n"));
+	fputs(_("GPU usage reporting via libdrm is not compiled in (libdrm 2.4.71 required), attempting memory path\n"), stderr);
 #endif
 
 #ifdef RADEON_INFO_VRAM_USAGE
@@ -178,8 +178,8 @@ void init_radeon(int fd, int drm_major, int drm_minor, int family) {
 		else
 			drmError(ret, _("Failed to get GTT usage"));
 	} else
-		fprintf(stderr, _("Memory usage reporting is disabled (radeon kernel driver 2.39.0 required)\n"));
+		fputs(_("Memory usage reporting is disabled (radeon kernel driver 2.39.0 required)\n"), stderr);
 #else
-	fprintf(stderr, _("Memory usage reporting is not compiled in (libdrm 2.4.53 required)\n"));
+	fputs(_("Memory usage reporting is not compiled in (libdrm 2.4.53 required)\n"), stderr);
 #endif
 }

@@ -21,7 +21,10 @@
 set -eu
 
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/radeontop-familycheck.XXXXXX")
-trap 'rm -rf "$scratch"' 0 1 2 15
+trap 'rm -rf "$scratch"' 0
+trap 'exit 129' 1
+trap 'exit 130' 2
+trap 'exit 143' 15
 
 extract_families() {
 	input_file=$1

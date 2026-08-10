@@ -46,7 +46,7 @@ output_dir=$(CDPATH='' cd -- "$output_dir" && pwd)
 
 for tool in cflow cscope ctags readtags gtags global lizard scc dot \
 	git sha256sum pkg-config cc awk sed find sort wc grep rg basename cmp cp \
-	dd chmod; do
+	tail chmod; do
 	command -v "$tool" >/dev/null 2>&1 || {
 		echo "required tool is unavailable: $tool" >&2
 		exit 1
@@ -136,7 +136,10 @@ cleanup() {
 		find "$analysis_snapshot_root" -depth -delete
 	fi
 }
-trap cleanup 0 1 2 15
+trap cleanup 0
+trap 'exit 129' 1
+trap 'exit 130' 2
+trap 'exit 143' 15
 
 repository_commit_start=$(git -C "$repo_root" rev-parse HEAD)
 repository_branch_start=$(
@@ -287,13 +290,13 @@ write_call_graph() {
 	graph_name=$1
 	shift
 
-	cflow --all --include=_s --number --format=gnu "$@" \
+	cflow --profile=gcc --all --include=_s --number --format=gnu "$@" \
 		> "$output_dir/cflow-$graph_name-forward.txt" \
 		2> "$output_dir/cflow-$graph_name-forward.stderr"
-	cflow --all --include=_s --number --reverse --format=gnu "$@" \
+	cflow --profile=gcc --all --include=_s --number --reverse --format=gnu "$@" \
 		> "$output_dir/cflow-$graph_name-reverse.txt" \
 		2> "$output_dir/cflow-$graph_name-reverse.stderr"
-	cflow --all --include=_s --format=dot "$@" \
+	cflow --profile=gcc --all --include=_s --format=dot "$@" \
 		> "$output_dir/cflow-$graph_name-callgraph.dot" \
 		2> "$output_dir/cflow-$graph_name-callgraph.stderr"
 	dot -Tsvg "$output_dir/cflow-$graph_name-callgraph.dot" \
@@ -384,7 +387,7 @@ normalize_cscope_database_root() {
 	printf 'cscope %s .               %010d\n' \
 		"$database_version" "$new_trailer_offset" \
 		> "$cscope_normalized_tmp"
-	dd if="$database_file" bs=1 skip="$old_header_bytes" status=none \
+	tail -c "+$((old_header_bytes + 1))" -- "$database_file" \
 		>> "$cscope_normalized_tmp"
 	expected_database_size=$((database_size_before + header_size_delta))
 	[ "$(wc -c < "$cscope_normalized_tmp")" -eq "$expected_database_size" ]
@@ -554,7 +557,8 @@ configured_detect_graph_valid "$modern_detect_graph" modern
 # Adding raw detect.c recreates the former unconfigured union.  The retained
 # negative control exposes modern discovery in the legacy graph and fails the
 # configured-graph predicate.
-cflow --all --include=_s --number --format=gnu "$legacy_detect_source" \
+cflow --profile=gcc --all --include=_s --number --format=gnu \
+	"$legacy_detect_source" \
 	./detect.c ./device_model.c ./rs480_observation.c \
 	> "$output_dir/calibration-configured-detect-graph-known-bad.txt" \
 	2> "$output_dir/calibration-configured-detect-graph-known-bad.stderr"

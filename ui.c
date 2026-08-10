@@ -21,8 +21,9 @@
 #include <stdarg.h>
 #include <stdio.h>
 
-static void printcenter(const unsigned int y, const unsigned int width,
-				const char * const fmt, ...) {
+static void __attribute__((format(printf, 3, 4)))
+printcenter(const unsigned int y, const unsigned int width,
+		const char * const fmt, ...) {
 
 	char *ptr;
 	va_list ap;
@@ -54,8 +55,9 @@ static void printcenter(const unsigned int y, const unsigned int width,
 	free(ptr);
 }
 
-static void printright(const unsigned int y, const unsigned int width,
-				const char * const fmt, ...) {
+static void __attribute__((format(printf, 3, 4)))
+printright(const unsigned int y, const unsigned int width,
+		const char * const fmt, ...) {
 
 	char *ptr;
 	va_list ap;
@@ -126,11 +128,11 @@ static int wait_bounded(struct collector *collector, uint64_t after,
 
 static void report_terminal(enum collector_terminal_cause cause) {
 	if (cause == COLLECTOR_TERMINAL_DEVICE_READ)
-		fprintf(stderr, _("The collector lost the device, stopping.\n"));
+		fputs(_("The collector lost the device, stopping.\n"), stderr);
 	else if (collector_terminal_cause_is_clock(cause))
-		fprintf(stderr, _("The collector clock failed, stopping.\n"));
+		fputs(_("The collector clock failed, stopping.\n"), stderr);
 	else
-		fprintf(stderr, _("The collector schedule failed, stopping.\n"));
+		fputs(_("The collector schedule failed, stopping.\n"), stderr);
 }
 
 int present(struct collector *collector, const struct engine_masks *masks,
@@ -143,7 +145,7 @@ int present(struct collector *collector, const struct engine_masks *masks,
 	struct collector_terminal terminal;
 	int status = 0;
 
-	printf(_("Collecting data, please wait....\n"));
+	fputs(_("Collecting data, please wait....\n"), stdout);
 
 	memset(&snapshot, 0, sizeof(snapshot));
 
@@ -160,7 +162,7 @@ int present(struct collector *collector, const struct engine_masks *masks,
 			return 1;
 		}
 		if (wait == COLLECTOR_WAIT_ERROR) {
-			fprintf(stderr, _("The collector wait failed, stopping.\n"));
+			fputs(_("The collector wait failed, stopping.\n"), stderr);
 			return 1;
 		}
 
@@ -170,7 +172,7 @@ int present(struct collector *collector, const struct engine_masks *masks,
 
 	SCREEN *screen = newterm(NULL, stderr, stdin);
 	if (!screen) {
-		fprintf(stderr, _("Failed to initialize the terminal interface.\n"));
+		fputs(_("Failed to initialize the terminal interface.\n"), stderr);
 		return 1;
 	}
 	noecho();
@@ -223,7 +225,7 @@ int present(struct collector *collector, const struct engine_masks *masks,
 		// generation N.
 		if (collector_state_peek(collector, &snapshot, &terminal) ||
 			!snapshot.generation) {
-			fprintf(stderr, _("The collector state is unavailable, stopping.\n"));
+			fputs(_("The collector state is unavailable, stopping.\n"), stderr);
 			status = 1;
 			break;
 		}
@@ -232,7 +234,7 @@ int present(struct collector *collector, const struct engine_masks *masks,
 
 		struct timespec drawn_at;
 		if (clock_gettime(CLOCK_MONOTONIC, &drawn_at)) {
-			fprintf(stderr, _("Failed to read the display clock.\n"));
+			fputs(_("Failed to read the display clock.\n"), stderr);
 			status = 1;
 			break;
 		}
@@ -320,7 +322,7 @@ int present(struct collector *collector, const struct engine_masks *masks,
 
 		if (color) attron(COLOR_PAIR(2));
 		percentage(start, w, vgt);
-		printright(start++, hw, _("Vertex Grouper + Tesselator %6.2f%%"), vgt);
+		printright(start++, hw, _("Vertex Grouper + Tessellator %6.2f%%"), vgt);
 		if (color) attroff(COLOR_PAIR(2));
 
 		// Enough height?

@@ -23,10 +23,34 @@ fi
 
 repo_root=$(git rev-parse --show-toplevel)
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/radeontop-test-dependencies.XXXXXX")
-trap 'rm -rf "$scratch"' 0 1 2 15
+trap 'rm -rf "$scratch"' 0
+trap 'exit 129' 1
+trap 'exit 130' 2
+trap 'exit 143' 15
 make_database="$scratch/make-database.txt"
+make_diagnostics="$scratch/make-diagnostics.txt"
 known_good_database="$scratch/known-good.txt"
 known_bad_database="$scratch/known-bad.txt"
+
+capture_make_database() {
+	database_root=$1
+	database_output=$2
+	diagnostics_output=$3
+
+	set +e
+	make -C "$database_root" -qp > "$database_output" 2> "$diagnostics_output"
+	make_status=$?
+	set -e
+	if [ -s "$diagnostics_output" ]; then
+		cat "$diagnostics_output" >&2
+		echo "GNU make emitted dependency-database diagnostics" >&2
+		return 2
+	fi
+	if [ "$make_status" -gt 1 ]; then
+		echo "GNU make could not produce its dependency database" >&2
+		return 2
+	fi
+}
 
 rule_has_prerequisite() {
 	database_path=$1
@@ -57,14 +81,57 @@ if rule_has_prerequisite "$known_bad_database" tests/example \
 	exit 1
 fi
 
+warning_tool_dir="$scratch/warning-tool"
+warning_make="$warning_tool_dir/make"
+warning_diagnostics="$scratch/warning-diagnostics.txt"
+mkdir -p "$warning_tool_dir"
+printf '%s\n' \
+	'#!/bin/sh' \
+	'echo "calibrated make warning" >&2' \
+	'exit 1' > "$warning_make"
+chmod +x "$warning_make"
+if PATH="$warning_tool_dir:$PATH" capture_make_database "$repo_root" \
+		"$scratch/warning-database.txt" "$warning_diagnostics" \
+		2> "$scratch/warning-verdict.txt"; then
+	echo "warning-emitting make fixture was accepted" >&2
+	exit 1
+fi
+grep -Fq 'calibrated make warning' "$scratch/warning-verdict.txt"
+
+signal_fixture="$scratch/signal-fixture"
+signal_ready="$signal_fixture/ready"
+mkdir -p "$signal_fixture"
+(
+	trap 'rm -rf "$signal_fixture"' 0
+	trap 'exit 129' 1
+	trap 'exit 130' 2
+	trap 'exit 143' 15
+	: > "$signal_ready"
+	while :; do
+		sleep 1
+	done
+) &
+signal_pid=$!
+signal_waits=0
+while [ ! -f "$signal_ready" ]; do
+	signal_waits=$((signal_waits + 1))
+	if [ "$signal_waits" -gt 100 ] || ! kill -0 "$signal_pid" 2>/dev/null; then
+		echo "signal cleanup fixture did not start" >&2
+		exit 1
+	fi
+	sleep 0.01
+done
+kill -TERM "$signal_pid"
 set +e
-make -C "$repo_root" -qp > "$make_database" 2>/dev/null
-make_status=$?
+wait "$signal_pid"
+signal_status=$?
 set -e
-if [ "$make_status" -gt 1 ]; then
-	echo "GNU make could not produce its dependency database" >&2
+if [ "$signal_status" -eq 0 ] || [ -e "$signal_fixture" ]; then
+	echo "signal cleanup fixture resumed or retained scratch state" >&2
 	exit 2
 fi
+
+capture_make_database "$repo_root" "$make_database" "$make_diagnostics"
 
 textual_include_count=0
 for test_source in "$repo_root"/tests/*.c; do

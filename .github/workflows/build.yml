@@ -110,10 +110,7 @@ jobs:
           make plain=1 CC=cgcc
 
       - name: XCB helper ABI
-        run: |
-          readelf --dyn-syms --wide libradeontop_xcb.so |
-            awk '$8 == "authenticate_drm_xcb" { count++ }
-                 END { exit count != 1 }'
+        run: ./tools/check-xcb-helper-abi.sh --self-test libradeontop_xcb.so
 
       - name: shellcheck
         run: shellcheck ./*.sh ./tools/*.sh
