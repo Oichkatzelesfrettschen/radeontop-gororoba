@@ -11,7 +11,10 @@ tmp="$out.tmp"
 source_manifest_out=include/radeontop-source-manifest.txt
 build_manifest_out=include/radeontop-build-manifest.txt
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/radeontop-build-identity.XXXXXX")
-trap 'rm -rf "$scratch" "$tmp" "$source_manifest_out.tmp" "$build_manifest_out.tmp"' 0 1 2 15
+trap 'rm -rf "$scratch" "$tmp" "$source_manifest_out.tmp" "$build_manifest_out.tmp"' 0
+trap 'exit 129' 1
+trap 'exit 130' 2
+trap 'exit 143' 15
 
 version=${RADEONTOP_VERSION:-}
 source_commit=${RADEONTOP_SOURCE_COMMIT:-}

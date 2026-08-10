@@ -30,7 +30,10 @@ done
 
 repo_root=$(git rev-parse --show-toplevel)
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/radeontop-dist-test.XXXXXX")
-trap 'rm -rf "$scratch"' 0 1 2 15
+trap 'rm -rf "$scratch"' 0
+trap 'exit 129' 1
+trap 'exit 130' 2
+trap 'exit 143' 15
 fixture="$scratch/repo"
 working_tree_paths="$scratch/working-tree-paths"
 working_tree_tar="$scratch/working-tree.tar"

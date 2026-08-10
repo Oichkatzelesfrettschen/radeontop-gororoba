@@ -59,7 +59,7 @@ CFLAGS ?= -Os
 # part of the recipe rather than a property of whichever compiler default
 # applies.
 CFLAGS += -std=gnu11
-CFLAGS += -Wall -Wextra -pthread
+CFLAGS += -Wall -Wextra -Wformat=2 -Wformat-security -pthread
 CFLAGS += -Iinclude
 CFLAGS += $(CFLAGS_SECTIONED)
 CFLAGS += $(shell pkg-config --cflags pciaccess)
@@ -275,7 +275,10 @@ endif
 
 man:
 	@diagnostics=$$(mktemp); \
-	trap 'rm -f "$$diagnostics"' 0 1 2 15; \
+	trap 'rm -f "$$diagnostics"' 0; \
+	trap 'exit 129' 1; \
+	trap 'exit 130' 2; \
+	trap 'exit 143' 15; \
 	if ! a2x -f manpage radeontop.asc 2>"$$diagnostics"; then \
 		cat "$$diagnostics" >&2; \
 		exit 1; \
@@ -307,7 +310,10 @@ dist:
 	scratch=$$(mktemp -d "$${TMPDIR:-/tmp}/radeontop-dist.XXXXXX"); \
 	archive_output=; \
 	sidecar_output=; \
-	trap 'rm -rf "$$scratch"; test -z "$$archive_output" || rm -f "$$archive_output"; test -z "$$sidecar_output" || rm -f "$$sidecar_output"' 0 1 2 15; \
+	trap 'rm -rf "$$scratch"; test -z "$$archive_output" || rm -f "$$archive_output"; test -z "$$sidecar_output" || rm -f "$$sidecar_output"' 0; \
+	trap 'exit 129' 1; \
+	trap 'exit 130' 2; \
+	trap 'exit 143' 15; \
 	export_root="$$scratch/$$name"; \
 	mkdir -p "$$export_root/include"; \
 	chmod 755 "$$export_root"; \
