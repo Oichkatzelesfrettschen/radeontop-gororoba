@@ -32,9 +32,8 @@ static void *test_mmap(void *address, size_t length, int protection,
 	int flags, int fd, off_t offset);
 static int test_munmap(void *address, size_t length);
 
-// The test compiles the real selection unit with only its operating-system
-// boundaries replaced.  The default binary selects the legacy bus-ID lane,
-// while TEST_DRM_BUS_DISCOVERY selects modern device enumeration.
+// TEST_DRM_BUS_DISCOVERY selects the DRM enumeration fixture.
+// The default build uses legacy PCI iteration.
 #ifdef TEST_DRM_BUS_DISCOVERY
 #define HAS_DRMGETDEVICE 1
 #else

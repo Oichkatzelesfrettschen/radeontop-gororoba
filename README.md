@@ -138,10 +138,14 @@ separately retained archive digest also authenticates the archive-internal
 baseline, whose SHA-256 the caller then passes explicitly.
 
 ```sh
+(cd ../dist-output && sha256sum -c radeontop-VERSION.tgz.sha256)
 baseline_sha256=$(awk '{print $1}' \
 	../radeontop-VERSION.source-baseline.sha256)
 make SOURCE_BASELINE_SHA256="$baseline_sha256"
 ```
+
+The pair-manifest check runs before the source-baseline sidecar is read. The
+caller retains the pair manifest through an independent release channel.
 
 Build options take `1` to enable a lane:
 

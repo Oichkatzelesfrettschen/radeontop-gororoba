@@ -396,9 +396,10 @@ static void check_append_record_boundary(void) {
 	CHECK(fseek(stream, 0, SEEK_SET) == 0);
 	CHECK(fputs("truncated", stream) != EOF);
 	CHECK(radeontop_capture_write_append_boundary(stream) == 0);
-	CHECK(fputs("# next-header\n", stream) != EOF);
+	CHECK(fputs("# radeontop_capture_v1 {\"run_id\":\"next\"}\n", stream) != EOF);
 	CHECK(read_stream(stream, output, sizeof(output)));
-	CHECK(!strcmp(output, "truncated\n# next-header\n"));
+	CHECK(!strcmp(output,
+		"truncated\n# radeontop_capture_v1 {\"run_id\":\"next\"}\n"));
 	CHECK(fclose(stream) == 0);
 
 	stream = fopen(path, "w");

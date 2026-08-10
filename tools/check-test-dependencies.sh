@@ -115,11 +115,11 @@ signal_pid=$!
 signal_waits=0
 while [ ! -f "$signal_ready" ]; do
 	signal_waits=$((signal_waits + 1))
-	if [ "$signal_waits" -gt 100 ] || ! kill -0 "$signal_pid" 2>/dev/null; then
+	if [ "$signal_waits" -gt 1 ] || ! kill -0 "$signal_pid" 2>/dev/null; then
 		echo "signal cleanup fixture did not start" >&2
 		exit 1
 	fi
-	sleep 0.01
+	sleep 1
 done
 kill -TERM "$signal_pid"
 set +e
