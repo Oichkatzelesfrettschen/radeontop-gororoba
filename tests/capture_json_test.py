@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 # Copyright (C) 2012 Lauri Kasanen
 #
 # This program is free software: you can redistribute it and/or modify
@@ -30,6 +28,7 @@ def parse_fixture(capture_test: str, option: str) -> tuple[dict, list[dict], dic
         [capture_test, option],
         check=True,
         capture_output=True,
+        encoding="ascii",
         text=True,
     )
     lines = result.stdout.splitlines()
@@ -97,6 +96,9 @@ def main() -> int:
     wait_header, wait_evidence, wait_run_end = parse_fixture(
         sys.argv[1], "--emit-clock-wait-after-generation-one-json-fixture"
     )
+    gap_header, gap_evidence, gap_run_end = parse_fixture(
+        sys.argv[1], "--emit-generation-gap-with-terminal-json-fixture"
+    )
     require(len(wait_evidence) == 1, "wait-clock fixture carries generation one")
     evidence = wait_evidence[0]
 
@@ -149,6 +151,7 @@ def main() -> int:
         publication_header["run_id"] == device_header["run_id"],
         "publication fixture run identity",
     )
+    require(gap_header["run_id"] == device_header["run_id"], "gap run identity")
     require(
         evidence["signals"]["status"]["supported"] is True, "supported status signal"
     )
@@ -223,6 +226,21 @@ def main() -> int:
             },
         },
         "wait-clock terminal record",
+    )
+    require(gap_evidence == [], "generation gap precedes retained evidence")
+    require(gap_run_end["reason"] == "generation-gap", "generation-gap reason")
+    require(gap_run_end["last_generation"] == 0, "generation-gap consumed state")
+    require(
+        gap_run_end["collector"]
+        == {
+            "latest_generation": 3,
+            "terminal": {
+                "after_generation": 3,
+                "cause": "clock-wait",
+                "read_result": None,
+            },
+        },
+        "generation-gap lock-consistent terminal record",
     )
 
     print("capture JSON: parsed schema and state distinctions")

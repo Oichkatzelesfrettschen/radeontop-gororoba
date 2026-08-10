@@ -558,9 +558,8 @@ static void *collector_worker(void *argument) {
 	memset(&schedule, 0, sizeof(schedule));
 
 	if (collector->clock.now(collector->clock.context, &schedule.window_start)) {
-		record_terminal(collector, COLLECTOR_TERMINAL_CLOCK_START);
-		mark_finished(collector);
-		return NULL;
+		terminal_cause = COLLECTOR_TERMINAL_CLOCK_START;
+		goto terminal;
 	}
 
 	schedule.base = schedule.window_start;
@@ -624,6 +623,8 @@ static void *collector_worker(void *argument) {
 			if (terminal_cause != COLLECTOR_TERMINAL_NONE)
 				goto terminal;
 		}
+		if (!timespec_reached(&schedule.deadline, &now))
+			continue;
 
 		// Exactly one read per wake-up.  A burst of catch-up reads would bias
 		// the duty estimate toward whatever the stall interrupted and would
@@ -770,21 +771,34 @@ int collector_start(struct collector *collector) {
 	return 0;
 }
 
-int collector_wait_next(struct collector *collector, uint64_t after_generation,
+static int collector_wait_next_mode(struct collector *collector,
+		uint64_t after_generation,
 		const struct timespec *abs_timeout,
 		struct collector_snapshot *snapshot_out,
-		struct collector_terminal *terminal_out) {
+		struct collector_terminal *terminal_out, bool contiguous) {
 	int result = COLLECTOR_WAIT_TIMEOUT;
 
 	if (!collector || !snapshot_out || !terminal_out)
 		return COLLECTOR_WAIT_ERROR;
 
 	pthread_mutex_lock(&collector->mutex);
+	if (contiguous && after_generation == UINT64_MAX) {
+		*snapshot_out = collector->snapshot;
+		*terminal_out = collector->terminal;
+		result = COLLECTOR_WAIT_GAP;
+		goto unlock;
+	}
 
 	for (;;) {
 		if (collector->snapshot.generation > after_generation) {
 			*snapshot_out = collector->snapshot;
-			result = COLLECTOR_WAIT_SNAPSHOT;
+			if (contiguous && collector->snapshot.generation !=
+					after_generation + 1) {
+				*terminal_out = collector->terminal;
+				result = COLLECTOR_WAIT_GAP;
+			} else {
+				result = COLLECTOR_WAIT_SNAPSHOT;
+			}
 			break;
 		}
 
@@ -823,32 +837,25 @@ int collector_wait_next(struct collector *collector, uint64_t after_generation,
 		}
 	}
 
+unlock:
 	pthread_mutex_unlock(&collector->mutex);
 	return result;
+}
+
+int collector_wait_next(struct collector *collector, uint64_t after_generation,
+		const struct timespec *abs_timeout,
+		struct collector_snapshot *snapshot_out,
+		struct collector_terminal *terminal_out) {
+	return collector_wait_next_mode(collector, after_generation, abs_timeout,
+		snapshot_out, terminal_out, false);
 }
 
 int collector_wait_next_contiguous(struct collector *collector,
 		uint64_t after_generation, const struct timespec *abs_timeout,
 		struct collector_snapshot *snapshot_out,
 		struct collector_terminal *terminal_out) {
-	if (!collector || !snapshot_out || !terminal_out)
-		return COLLECTOR_WAIT_ERROR;
-
-	if (after_generation == UINT64_MAX) {
-		pthread_mutex_lock(&collector->mutex);
-		*snapshot_out = collector->snapshot;
-		pthread_mutex_unlock(&collector->mutex);
-		return COLLECTOR_WAIT_GAP;
-	}
-
-	const int result = collector_wait_next(collector, after_generation,
-		abs_timeout, snapshot_out, terminal_out);
-
-	if (result == COLLECTOR_WAIT_SNAPSHOT &&
-		snapshot_out->generation != after_generation + 1)
-		return COLLECTOR_WAIT_GAP;
-
-	return result;
+	return collector_wait_next_mode(collector, after_generation, abs_timeout,
+		snapshot_out, terminal_out, true);
 }
 
 bool collector_peek(struct collector *collector, struct collector_snapshot *out) {

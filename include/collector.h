@@ -266,13 +266,15 @@ enum collector_wait_result {
 	COLLECTOR_WAIT_FINISHED = 2, // the worker exited; snapshot_out holds its last state
 	COLLECTOR_WAIT_FATAL = 3,    // the worker stopped; terminal_out holds why
 	COLLECTOR_WAIT_ERROR = 4,    // the wait primitive failed; outputs stay unmodified
-	COLLECTOR_WAIT_GAP = 5       // an exact consumer lost windows; snapshot_out holds latest
+	COLLECTOR_WAIT_GAP = 5       // an exact consumer lost windows; outputs hold paired state
 };
 
 // abs_timeout is a CLOCK_MONOTONIC deadline, or NULL to wait indefinitely.  A
 // consumer that must also observe a signal flag passes a bounded deadline and
-// re-tests the flag on COLLECTOR_WAIT_TIMEOUT.  SNAPSHOT, FINISHED, and GAP
-// write snapshot_out; FATAL writes terminal_out; TIMEOUT and ERROR write neither.
+// re-tests the flag on COLLECTOR_WAIT_TIMEOUT.  SNAPSHOT and FINISHED write
+// snapshot_out, GAP writes both outputs under one lock, FATAL writes terminal_out,
+// and TIMEOUT and ERROR write neither.  A GAP terminal can carry NONE when the
+// worker remains active.
 int collector_wait_next(struct collector *collector, uint64_t after_generation,
 		const struct timespec *abs_timeout,
 		struct collector_snapshot *snapshot_out,

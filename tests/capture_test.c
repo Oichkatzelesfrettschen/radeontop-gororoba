@@ -444,7 +444,8 @@ static void check_append_record_boundary(void) {
 enum json_fixture_kind {
 	JSON_FIXTURE_DEVICE_READ_BEFORE_FIRST = 0,
 	JSON_FIXTURE_PUBLICATION_CLOCK_BEFORE_FIRST,
-	JSON_FIXTURE_CLOCK_WAIT_AFTER_GENERATION_ONE
+	JSON_FIXTURE_CLOCK_WAIT_AFTER_GENERATION_ONE,
+	JSON_FIXTURE_GENERATION_GAP_WITH_TERMINAL
 };
 
 static int emit_json_fixture(enum json_fixture_kind fixture_kind) {
@@ -518,6 +519,13 @@ static int emit_json_fixture(enum json_fixture_kind fixture_kind) {
 			emit_evidence = true;
 			last_generation = snapshot.generation;
 			record_count = 1;
+			footer_snapshot = &snapshot;
+			break;
+		case JSON_FIXTURE_GENERATION_GAP_WITH_TERMINAL:
+			reason = "generation-gap";
+			snapshot.generation = 3;
+			terminal.cause = COLLECTOR_TERMINAL_CLOCK_WAIT;
+			terminal.after_generation = snapshot.generation;
 			footer_snapshot = &snapshot;
 			break;
 		default:
@@ -621,6 +629,9 @@ int main(int argc, char **argv) {
 	if (argc == 2 && !strcmp(argv[1],
 			"--emit-clock-wait-after-generation-one-json-fixture"))
 		return emit_json_fixture(JSON_FIXTURE_CLOCK_WAIT_AFTER_GENERATION_ONE);
+	if (argc == 2 && !strcmp(argv[1],
+			"--emit-generation-gap-with-terminal-json-fixture"))
+		return emit_json_fixture(JSON_FIXTURE_GENERATION_GAP_WITH_TERMINAL);
 	if (argc != 1)
 		return 2;
 

@@ -834,6 +834,38 @@ static void case_dither_skips_only_passed_sample_points(void) {
 	harness_destroy(&harness);
 }
 
+// A late wake can skip one grid slot while the dithered sample point in the
+// next slot still lies ahead.  The worker waits for that sample point instead
+// of reading at the stale wake time.
+static void case_dither_rewaits_after_skipped_slot(void) {
+	static const int64_t extra_delay[] = { 70000000LL };
+	static const uint32_t values[] = { GUI_BIT };
+	struct harness harness;
+	struct collector_snapshot snapshot;
+	int64_t first_sample_ns;
+
+	current_case = "dither_rewaits_after_skipped_slot";
+	harness_init(&harness);
+	harness.masks.lane[COLLECTOR_LANE_GUI] = GUI_BIT;
+	harness.backend.status_values = values;
+	harness.backend.status_values_len = 1;
+	harness.backend.clock = &harness.clock;
+	harness.backend.record_times = true;
+	harness.clock.extra_delay_ns = extra_delay;
+	harness.clock.extra_delay_len = sizeof(extra_delay) / sizeof(extra_delay[0]);
+
+	harness_start_seeded(&harness, 10, 1, COLLECTOR_CAP_STATUS, 0x5eed);
+	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_SNAPSHOT);
+	CHECK(harness.backend.sample_time_count >= 1);
+	first_sample_ns = (int64_t) harness.backend.sample_times[0].tv_sec *
+		NS_PER_SEC + harness.backend.sample_times[0].tv_nsec;
+	CHECK_U64((uint64_t) first_sample_ns, UINT64_C(163046005));
+	CHECK(first_sample_ns != INT64_C(116416052));
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
 static void case_failed_status_between_valid(void) {
 	static const uint32_t values[] = { GUI_BIT };
 	static const int results[] = { COLLECTOR_READ_OK, COLLECTOR_READ_OK,
@@ -1225,6 +1257,42 @@ static void case_contiguous_wait_detects_lost_window(void) {
 	CHECK(collector_wait_next_contiguous(&harness.collector, UINT64_MAX,
 		NULL, &snapshot, &terminal) == COLLECTOR_WAIT_GAP);
 	CHECK_U64(snapshot.generation, 3);
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+static void case_contiguous_gap_preserves_terminal(void) {
+	struct harness harness;
+	struct collector_snapshot first, latest, gap_snapshot;
+	struct collector_terminal terminal, gap_terminal;
+
+	current_case = "contiguous_gap_preserves_terminal";
+	harness_init(&harness);
+	harness.clock.fail_wait_call = 3;
+	harness_start(&harness, 1, 1, COLLECTOR_CAP_STATUS);
+
+	CHECK(next_snapshot(&harness, 0, &first) == COLLECTOR_WAIT_SNAPSHOT);
+	CHECK(next_snapshot(&harness, first.generation, &latest) ==
+		COLLECTOR_WAIT_SNAPSHOT);
+	CHECK(next_terminal(&harness, latest.generation, &terminal) ==
+		COLLECTOR_WAIT_FATAL);
+	CHECK_U64(first.generation, 1);
+	CHECK_U64(latest.generation, 2);
+
+	memset(&gap_snapshot, 0x5a, sizeof(gap_snapshot));
+	memset(&gap_terminal, 0x5a, sizeof(gap_terminal));
+	CHECK(collector_wait_next_contiguous(&harness.collector, 0, NULL,
+		&gap_snapshot, &gap_terminal) == COLLECTOR_WAIT_GAP);
+	CHECK(!memcmp(&latest, &gap_snapshot, sizeof(latest)));
+	CHECK(!memcmp(&terminal, &gap_terminal, sizeof(terminal)));
+
+	memset(&gap_snapshot, 0x5a, sizeof(gap_snapshot));
+	memset(&gap_terminal, 0x5a, sizeof(gap_terminal));
+	CHECK(collector_wait_next_contiguous(&harness.collector, UINT64_MAX, NULL,
+		&gap_snapshot, &gap_terminal) == COLLECTOR_WAIT_GAP);
+	CHECK(!memcmp(&latest, &gap_snapshot, sizeof(latest)));
+	CHECK(!memcmp(&terminal, &gap_terminal, sizeof(terminal)));
 
 	harness_stop(&harness);
 	harness_destroy(&harness);
@@ -2185,6 +2253,7 @@ int main(void) {
 	case_generations_monotonic();
 	case_join_failure_preserves_lifecycle_owners();
 	case_contiguous_wait_detects_lost_window();
+	case_contiguous_gap_preserves_terminal();
 	case_old_copy_survives();
 	case_fatal_before_first_generation();
 	case_stop_while_waiting();
@@ -2207,6 +2276,7 @@ int main(void) {
 	case_unseeded_schedule_stays_exact();
 	case_dither_seed_reproduces_offsets();
 	case_dither_skips_only_passed_sample_points();
+	case_dither_rewaits_after_skipped_slot();
 
 	printf("collector: %u checks, %u failed\n", checks_run, checks_failed);
 

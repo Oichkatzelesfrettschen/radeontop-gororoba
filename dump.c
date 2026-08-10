@@ -296,11 +296,15 @@ int dumpdata(struct collector *collector, const struct engine_masks *masks,
 			break;
 		}
 		if (wait == COLLECTOR_WAIT_GAP) {
-			fprintf(stderr,
-				_("The capture lost a completed measurement window, stopping.\n"));
+			fputs(_("The capture lost a completed measurement window, stopping.\n"),
+				stderr);
 			end_reason = "generation-gap";
 			collector_snapshot = snapshot;
 			collector_snapshot_valid = true;
+			if (event_terminal.cause != COLLECTOR_TERMINAL_NONE) {
+				terminal = event_terminal;
+				terminal_valid = true;
+			}
 			status = 1;
 			break;
 		}
