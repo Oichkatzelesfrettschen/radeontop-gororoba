@@ -789,8 +789,8 @@ int collector_wait_next(struct collector *collector, uint64_t after_generation,
 		}
 
 		// A terminal worker publishes no further generation.  An unseen completed
-		// generation takes precedence above, so a consumer receives the final
-		// measurement before its associated terminal record.
+		// generation takes precedence over terminal state, so a consumer receives
+		// the final measurement before its associated terminal record.
 		if (collector->terminal.cause != COLLECTOR_TERMINAL_NONE) {
 			*terminal_out = collector->terminal;
 			result = COLLECTOR_WAIT_FATAL;

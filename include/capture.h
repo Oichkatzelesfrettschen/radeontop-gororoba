@@ -52,7 +52,7 @@ struct radeontop_capture_metadata {
 	struct timespec started_monotonic;
 	int argc;
 	// argv borrows the caller's vector and byte strings.  They remain alive and
-	// unchanged through every capture-header write that uses this metadata.
+	// unchanged through every capture-header write receiving the metadata.
 	char *const *argv;
 	struct radeon_device_identity identity;
 	struct collector_config config;

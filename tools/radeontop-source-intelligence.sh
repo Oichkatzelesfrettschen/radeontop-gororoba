@@ -444,9 +444,9 @@ project_origin_preprocess() {
 	configured_source=$2
 	diagnostics=$3
 
-	# The Makefile compiles this test with the same project include path and
-	# libdrm/libpciaccess flags.  Compiler preprocessing resolves the macros set
-	# inside the test before its textual detect.c inclusion.
+	# The Makefile compiles tests/detect_path_test.c with the same project include
+	# path and libdrm/libpciaccess flags.  Compiler preprocessing resolves the
+	# test-defined macros before the textual detect.c inclusion.
 	# shellcheck disable=SC2086
 	cc -E -std=gnu11 $lane_flag -Iinclude -I../generated/include \
 		$detect_compiler_flags \
@@ -454,8 +454,9 @@ project_origin_preprocess() {
 	[ ! -s "$diagnostics" ]
 
 	# System declarations obscure the project call map and produce cflow parser
-	# noise.  GCC line markers retain only the two project files that form this
-	# textual translation unit while preserving their source line identities.
+	# noise.  GCC line markers retain tests/detect_path_test.c and detect.c, the
+	# two project files in the textual translation unit, while preserving their
+	# source line identities.
 	awk '
 		/^# [0-9]+ "/ {
 			path = $3

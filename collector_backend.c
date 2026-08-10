@@ -14,12 +14,11 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-// Binds the family-selected device readers and the RBBM/GRBM masks to the
-// collector's injectable interfaces.  The classification of a failed read lives
-// here because each read path reports differently: an MMIO load always yields a
-// word and returns 0, so a device that has gone away answers all-ones and the
-// classification rests on the return convention rather than on device presence,
-// while drmCommandWriteRead and the libdrm_amdgpu queries return -errno.
+// collector_backend_from_device binds the family-selected device readers and
+// RBBM/GRBM masks to the collector's injectable interfaces.  classify interprets
+// each reader's return convention: direct MMIO readers return 0 for every
+// completed load, while drmCommandWriteRead and the libdrm_amdgpu queries return
+// -errno and carry terminal device-removal failures.
 
 #include "radeontop.h"
 
