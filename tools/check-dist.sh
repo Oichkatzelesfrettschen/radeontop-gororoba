@@ -117,17 +117,29 @@ mkdir -p "$extract_root"
 tar --same-permissions -xzf "$first_archive" -C "$extract_root"
 export_root="$extract_root/radeontop-$fixture_version"
 export_metadata="$export_root/include/radeontop-source-export.mk"
+export_baseline="$export_root/include/radeontop-source-export-baseline.sha256"
 if [ ! -f "$export_metadata" ]; then
 	echo "distribution source identity is missing" >&2
+	exit 1
+fi
+if [ ! -f "$export_baseline" ]; then
+	echo "distribution source baseline is missing" >&2
 	exit 1
 fi
 if [ "$(stat -c %a "$export_metadata")" != 644 ]; then
 	echo "distribution source identity mode is not 0644" >&2
 	exit 1
 fi
+if [ "$(stat -c %a "$export_baseline")" != 644 ]; then
+	echo "distribution source baseline mode is not 0644" >&2
+	exit 1
+fi
 grep -Fxq "VERSION ?= $fixture_version" "$export_metadata"
 grep -Fxq "SOURCE_COMMIT ?= $fixture_commit" "$export_metadata"
 grep -Fxq 'SOURCE_STATE ?= clean' "$export_metadata"
+grep -Fxq \
+	'SOURCE_BASELINE ?= include/radeontop-source-export-baseline.sha256' \
+	"$export_metadata"
 if grep -Fq 'distribution self-test dirty marker' "$export_root/Makefile"; then
 	echo "distribution captured dirty worktree content" >&2
 	exit 1
@@ -163,10 +175,35 @@ grep -Eq '^[0-9a-f]{64}  Makefile$' \
 	"$export_root/include/radeontop-source-manifest.txt"
 grep -Eq '^[0-9a-f]{64}  include/radeontop-source-export[.]mk$' \
 	"$export_root/include/radeontop-source-manifest.txt"
+grep -Eq \
+	'^[0-9a-f]{64}  include/radeontop-source-export-baseline[.]sha256$' \
+	"$export_root/include/radeontop-source-manifest.txt"
 retained_source_sha256=$(sha256sum \
 	"$export_root/include/radeontop-source-manifest.txt" | awk '{print $1}')
 if [ "$retained_source_sha256" != "$first_source_sha256" ]; then
 	echo "distribution source-manifest digest does not reproduce" >&2
+	exit 1
+fi
+
+saved_auth="$scratch/export-auth.c"
+cp "$export_root/auth.c" "$saved_auth"
+printf '%s\n' '// distribution source mutation' >> "$export_root/auth.c"
+make -C "$export_root" include/version.h nls=0 xcb=0 amdgpu=0 \
+	CFLAGS=-O2 LDFLAGS=-Wl,-O1 LIBS=-lm >/dev/null
+if [ "$(read_macro RADEONTOP_SOURCE_STATE)" != dirty ]; then
+	echo "distribution source mutation retained a clean state" >&2
+	exit 1
+fi
+if [ "$(read_macro RADEONTOP_SOURCE_SHA256)" = "$first_source_sha256" ]; then
+	echo "distribution source mutation retained the clean digest" >&2
+	exit 1
+fi
+cp "$saved_auth" "$export_root/auth.c"
+make -C "$export_root" include/version.h nls=0 xcb=0 amdgpu=0 \
+	CFLAGS=-O2 LDFLAGS=-Wl,-O1 LIBS=-lm >/dev/null
+if [ "$(read_macro RADEONTOP_SOURCE_STATE)" != clean ] ||
+		[ "$(read_macro RADEONTOP_SOURCE_SHA256)" != "$first_source_sha256" ]; then
+	echo "restored distribution source did not recover its clean identity" >&2
 	exit 1
 fi
 
@@ -188,5 +225,22 @@ if make -C "$export_root" include/version.h nls=0 xcb=0 amdgpu=0 \
 	echo "distribution accepted an invalid source object" >&2
 	exit 1
 fi
+
+saved_baseline="$scratch/source-export-baseline.sha256"
+cp "$export_baseline" "$saved_baseline"
+rm -f "$export_baseline"
+if make -C "$export_root" include/version.h nls=0 xcb=0 amdgpu=0 \
+		>/dev/null 2>&1; then
+	echo "distribution accepted a missing source baseline" >&2
+	exit 1
+fi
+cp "$saved_baseline" "$export_baseline"
+sed '$d' "$saved_baseline" > "$export_baseline"
+if make -C "$export_root" include/version.h nls=0 xcb=0 amdgpu=0 \
+		>/dev/null 2>&1; then
+	echo "distribution accepted an incomplete source baseline" >&2
+	exit 1
+fi
+cp "$saved_baseline" "$export_baseline"
 
 echo "distribution: explicit deterministic export accepted, implicit and mutated outputs rejected"

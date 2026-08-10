@@ -28,6 +28,7 @@ xcb ?= 1
 # A Git archive carries this generated fragment so downstream builds retain
 # the exact source object while regenerating identity for their own toolchain.
 source_export_metadata = include/radeontop-source-export.mk
+source_export_baseline = include/radeontop-source-export-baseline.sha256
 -include $(source_export_metadata)
 
 # VERSION stamps include/version.h and identifies the compiled sources.  A
@@ -38,6 +39,7 @@ VERSION ?=
 # the capture header retains the immutable source object and tree state.
 SOURCE_COMMIT ?=
 SOURCE_STATE ?=
+SOURCE_BASELINE ?=
 
 bin = radeontop
 xcblib = libradeontop_xcb.so
@@ -115,12 +117,21 @@ ifeq ($(xcb), 1)
 	LIBS += -ldl
 endif
 
-# These files determine the production binary or its dynamically loaded XCB
-# helper.  getver.sh hashes their names and contents into the capture identity;
-# generated include/version.h stays out to avoid a circular digest.
+# These files determine every selectable production binary or dynamically
+# loaded XCB helper.  A source export hashes the full set once, so getver.sh can
+# distinguish its archived bytes from a later edit without Git metadata.
+source_state_core_inputs = Makefile getver.sh $(sort $(src) amdgpu.c) auth_xcb.c \
+	$(filter-out $(verh),$(wildcard include/*.h))
+source_state_inputs = $(source_state_core_inputs) \
+	$(wildcard $(source_export_metadata))
+
+# These files determine the selected production binary or its dynamically
+# loaded XCB helper.  getver.sh hashes their names and contents into the capture
+# identity; generated include/version.h stays out to avoid a circular digest.
 identity_inputs = Makefile getver.sh $(src) \
 	$(if $(filter 1,$(xcb)),auth_xcb.c) \
 	$(wildcard $(source_export_metadata)) \
+	$(wildcard $(source_export_baseline)) \
 	$(filter-out $(verh),$(wildcard include/*.h))
 
 # On some distros, you might have to change this to ncursesw
@@ -238,6 +249,7 @@ source-intelligence:
 $(verh): export RADEONTOP_VERSION = $(VERSION)
 $(verh): export RADEONTOP_SOURCE_COMMIT = $(SOURCE_COMMIT)
 $(verh): export RADEONTOP_SOURCE_STATE = $(SOURCE_STATE)
+$(verh): export RADEONTOP_SOURCE_BASELINE = $(SOURCE_BASELINE)
 $(verh): export RADEONTOP_BUILD_CC = $(CC)
 $(verh): export RADEONTOP_BUILD_CC_VERSION = $(shell $(CC) --version 2>/dev/null | sed -n '1p')
 $(verh): export RADEONTOP_BUILD_CPPFLAGS = $(CPPFLAGS)
@@ -246,7 +258,7 @@ $(verh): export RADEONTOP_BUILD_LDFLAGS = $(LDFLAGS)
 $(verh): export RADEONTOP_BUILD_LIBS = $(LIBS) $(xcb_LIBS)
 $(verh): export RADEONTOP_BUILD_OPTIONS = nls=$(nls) xcb=$(xcb) amdgpu=$(amdgpu)
 $(verh): FORCE $(identity_inputs)
-	./getver.sh $(sort $(identity_inputs))
+	./getver.sh $(sort $(identity_inputs)) -- $(sort $(source_state_inputs))
 
 FORCE:
 
@@ -323,8 +335,17 @@ dist:
 		printf 'VERSION ?= %s\n' "$$version"; \
 		printf 'SOURCE_COMMIT ?= %s\n' "$$commit"; \
 		printf '%s\n' 'SOURCE_STATE ?= clean'; \
+		printf 'SOURCE_BASELINE ?= %s\n' "$(source_export_baseline)"; \
 	} > "$$export_root/$(source_export_metadata)"; \
 	chmod 0644 "$$export_root/$(source_export_metadata)"; \
+	( \
+		cd "$$export_root"; \
+		for source_path in $(sort $(source_state_core_inputs) $(source_export_metadata)); do \
+			test -f "$$source_path"; \
+			sha256sum -- "$$source_path"; \
+		done \
+	) > "$$export_root/$(source_export_baseline)"; \
+	chmod 0644 "$$export_root/$(source_export_baseline)"; \
 	tar --sort=name --mtime="@$$epoch" --owner=0 --group=0 --numeric-owner \
 		-C "$$scratch" -cf "$$scratch/archive.tar" "$$name"; \
 	archive_output=$$(mktemp "$$output_dir/.radeontop-dist.XXXXXX"); \

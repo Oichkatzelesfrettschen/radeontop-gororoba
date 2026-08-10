@@ -19,9 +19,80 @@ trap 'exit 143' 15
 version=${RADEONTOP_VERSION:-}
 source_commit=${RADEONTOP_SOURCE_COMMIT:-}
 source_state=${RADEONTOP_SOURCE_STATE:-}
+source_baseline=${RADEONTOP_SOURCE_BASELINE:-}
 git_root=
 live_commit=
 live_state=
+
+case "$source_state" in
+	''|clean|dirty|unknown) ;;
+	*)
+		echo "SOURCE_STATE must be clean, dirty, or unknown" >&2
+		exit 2
+		;;
+esac
+
+validate_input_path() {
+	candidate_path=$1
+
+	case "$candidate_path" in
+		/*|*'..'*|*[!A-Za-z0-9_./+-]*)
+			echo "invalid source-input path: $candidate_path" >&2
+			exit 2
+			;;
+	esac
+}
+
+source_manifest_unsorted="$scratch/source-inputs.unsorted.sha256"
+identity_paths="$scratch/identity-paths.txt"
+state_paths_unsorted="$scratch/state-paths.unsorted.txt"
+source_manifest="$scratch/source-inputs.sha256"
+state_paths="$scratch/state-paths.txt"
+argument_class=identity
+separator_count=0
+identity_count=0
+state_count=0
+: > "$source_manifest_unsorted"
+: > "$identity_paths"
+: > "$state_paths_unsorted"
+
+for input_path do
+	if [ "$input_path" = -- ]; then
+		separator_count=$((separator_count + 1))
+		argument_class=state
+		continue
+	fi
+
+	validate_input_path "$input_path"
+	if [ "$argument_class" = identity ]; then
+		if [ ! -f "$input_path" ]; then
+			echo "missing source-input path: $input_path" >&2
+			exit 2
+		fi
+		sha256sum -- "$input_path" >> "$source_manifest_unsorted"
+		printf '%s\n' "$input_path" >> "$identity_paths"
+		identity_count=$((identity_count + 1))
+	else
+		printf '%s\n' "$input_path" >> "$state_paths_unsorted"
+		state_count=$((state_count + 1))
+	fi
+done
+
+if [ "$separator_count" -ne 1 ] || [ "$identity_count" -eq 0 ] ||
+		[ "$state_count" -eq 0 ]; then
+	echo "getver.sh requires identity and source-state input denominators" >&2
+	exit 2
+fi
+
+if [ -n "$(LC_ALL=C sort "$identity_paths" | uniq -d)" ] ||
+		[ -n "$(LC_ALL=C sort "$state_paths_unsorted" | uniq -d)" ]; then
+	echo "source-input denominators contain a duplicate path" >&2
+	exit 2
+fi
+
+LC_ALL=C sort "$source_manifest_unsorted" > "$source_manifest"
+LC_ALL=C sort "$state_paths_unsorted" > "$state_paths"
+source_sha256=$(sha256sum -- "$source_manifest" | awk '{print $1}')
 
 if command -v git >/dev/null 2>&1; then
 	git_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
@@ -53,8 +124,49 @@ if [ -n "$git_root" ] && [ "$(CDPATH='' cd -- "$git_root" && pwd -P)" = "$(pwd -
 	fi
 else
 	: "${source_commit:=unknown}"
-	: "${source_state:=unknown}"
 	: "${version:=unknown}"
+
+	if [ -n "$source_baseline" ]; then
+		validate_input_path "$source_baseline"
+		if [ ! -f "$source_baseline" ] || [ -L "$source_baseline" ]; then
+			echo "source export baseline is not a regular file" >&2
+			exit 2
+		fi
+
+		baseline_paths="$scratch/baseline-paths.txt"
+		if ! awk '
+			length($1) != 64 || $1 ~ /[^0-9a-f]/ ||
+				substr($0, 65, 2) != "  " {
+				exit 1
+			}
+			{
+				path = substr($0, 67)
+				if (path == "" || path ~ /^\// || path ~ /\.\./ ||
+						path ~ /[^A-Za-z0-9_.\/+\-]/)
+					exit 1
+				print path
+			}
+		' "$source_baseline" > "$baseline_paths"; then
+			echo "source export baseline is malformed" >&2
+			exit 2
+		fi
+		if ! cmp -s "$baseline_paths" "$state_paths"; then
+			echo "source export baseline denominator differs from production inputs" >&2
+			exit 2
+		fi
+
+		if sha256sum --status -c -- "$source_baseline"; then
+			source_state=clean
+		else
+			source_state=dirty
+		fi
+	else
+		if [ "$source_state" = clean ]; then
+			echo "SOURCE_STATE clean requires a source export baseline" >&2
+			exit 2
+		fi
+		: "${source_state:=unknown}"
+	fi
 fi
 
 case "$version" in
@@ -86,28 +198,6 @@ case "$source_state" in
 		exit 2
 		;;
 esac
-
-if [ "$#" -eq 0 ]; then
-	echo "getver.sh requires the production source-input denominator" >&2
-	exit 2
-fi
-
-source_manifest="$scratch/source-inputs.sha256"
-for input_path do
-	case "$input_path" in
-		/*|*'..'*|*[!A-Za-z0-9_./+-]*)
-			echo "invalid source-input path: $input_path" >&2
-			exit 2
-			;;
-	esac
-	if [ ! -f "$input_path" ]; then
-		echo "missing source-input path: $input_path" >&2
-		exit 2
-	fi
-	sha256sum -- "$input_path"
-done | LC_ALL=C sort > "$source_manifest"
-
-source_sha256=$(sha256sum -- "$source_manifest" | awk '{print $1}')
 
 hex_field() {
 	field_name=$1

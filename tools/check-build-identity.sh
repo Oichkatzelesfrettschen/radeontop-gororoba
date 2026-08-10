@@ -56,7 +56,7 @@ generate_identity() {
 		RADEONTOP_BUILD_LDFLAGS=-Wl,-O1 \
 		RADEONTOP_BUILD_LIBS=-lm \
 		RADEONTOP_BUILD_OPTIONS='nls=0 xcb=0 amdgpu=0' \
-		./getver.sh getver.sh input.c
+		./getver.sh getver.sh input.c -- getver.sh input.c
 	)
 }
 
@@ -147,12 +147,28 @@ exported="$scratch/export"
 mkdir -p "$exported/include"
 cp "$fixture/getver.sh" "$exported/getver.sh"
 cp "$fixture/input.c" "$exported/input.c"
+exported_baseline=include/radeontop-source-export-baseline.sha256
+(
+	cd "$exported"
+	sha256sum getver.sh input.c > "$exported_baseline"
+)
+if (
+	cd "$exported"
+	RADEONTOP_VERSION=1.4.rexport.g000000000000 \
+	RADEONTOP_SOURCE_COMMIT="$fixture_commit" \
+	RADEONTOP_SOURCE_STATE=clean \
+	./getver.sh getver.sh input.c -- getver.sh input.c
+) >/dev/null 2>&1; then
+	echo "exported clean source state was accepted without a baseline" >&2
+	exit 1
+fi
 (
 	cd "$exported"
 	RADEONTOP_VERSION=1.4.rexport.g000000000000 \
 	RADEONTOP_SOURCE_COMMIT="$fixture_commit" \
 	RADEONTOP_SOURCE_STATE=clean \
-	./getver.sh getver.sh input.c
+	RADEONTOP_SOURCE_BASELINE="$exported_baseline" \
+	./getver.sh getver.sh "$exported_baseline" input.c -- getver.sh input.c
 )
 grep -Fq "#define RADEONTOP_SOURCE_COMMIT \"$fixture_commit\"" \
 	"$exported/include/version.h"
@@ -165,7 +181,8 @@ sha256_fixture_commit=0123456789abcdef0123456789abcdef0123456789abcdef0123456789
 	RADEONTOP_VERSION=1.4.rexport.g000000000000 \
 	RADEONTOP_SOURCE_COMMIT="$sha256_fixture_commit" \
 	RADEONTOP_SOURCE_STATE=clean \
-	./getver.sh getver.sh input.c
+	RADEONTOP_SOURCE_BASELINE="$exported_baseline" \
+	./getver.sh getver.sh "$exported_baseline" input.c -- getver.sh input.c
 )
 grep -Fq "#define RADEONTOP_SOURCE_COMMIT \"$sha256_fixture_commit\"" \
 	"$exported/include/version.h"
@@ -182,7 +199,8 @@ exported_header_sha256=$(awk '
 
 if (
 	cd "$exported"
-	RADEONTOP_VERSION='invalid version' ./getver.sh getver.sh input.c
+		RADEONTOP_VERSION='invalid version' \
+		./getver.sh getver.sh input.c -- getver.sh input.c
 ) >/dev/null 2>&1; then
 	echo "invalid version accepted" >&2
 	exit 1
@@ -190,9 +208,11 @@ fi
 
 if (
 	cd "$exported"
-	RADEONTOP_VERSION=1.4.rexport.g000000000000 \
-	RADEONTOP_SOURCE_COMMIT=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde \
-	RADEONTOP_SOURCE_STATE=clean ./getver.sh getver.sh input.c
+		RADEONTOP_VERSION=1.4.rexport.g000000000000 \
+		RADEONTOP_SOURCE_COMMIT=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde \
+		RADEONTOP_SOURCE_STATE=clean \
+		RADEONTOP_SOURCE_BASELINE="$exported_baseline" \
+		./getver.sh getver.sh "$exported_baseline" input.c -- getver.sh input.c
 ) >/dev/null 2>&1; then
 	echo "63-character source object accepted" >&2
 	exit 1
