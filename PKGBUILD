@@ -28,7 +28,7 @@ _basecommit='15521706464b78dc9af60495b648b9d536b4d085'
 # to a commit already merged to master, because a squash or rebase merge
 # rewrites the object ids a pull request head carried and can leave a pinned
 # pre-merge object unreachable.
-_commit='c1a4086585064417406612ca8c83c2eee4f035a7'
+_commit='f105aa8dd60b2fe36d4d22d94d496e478fa45806'
 
 # pkgver identifies the source and pkgrel identifies the packaging.  Changing
 # _commit changes pkgver and resets pkgrel to 1; changing the recipe, the
@@ -36,7 +36,7 @@ _commit='c1a4086585064417406612ca8c83c2eee4f035a7'
 # _commit increments pkgrel.  The literal below equals what pkgver() derives for
 # _commit, and `makepkg --nobuild && git diff --exit-code PKGBUILD` proves it,
 # because makepkg rewrites this line when the two disagree.
-pkgver=1.4.r67.gc1a408658506
+pkgver=1.4.r110.gf105aa8dd60b
 pkgrel=1
 
 pkgdesc="GPU utilization monitor with RS480/RS482 (RS4xx) BAR2 read-path"
@@ -47,6 +47,7 @@ license=('GPL-3.0-only')
 depends=('libpciaccess' 'libdrm' 'ncurses' 'libxcb')
 # base-devel supplies pkgconf and gettext.  git fetches the pinned source.
 makedepends=('git')
+checkdepends=('python')
 provides=("radeontop=$pkgver")
 conflicts=('radeontop')
 
