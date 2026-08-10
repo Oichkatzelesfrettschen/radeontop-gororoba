@@ -124,7 +124,7 @@ jobs:
         run: ./familycheck.sh --self-test
 
   unit:
-    name: unit integrity
+    name: collector integrity
     runs-on: ubuntu-latest
     steps:
       # actions/checkout v7.0.1 supplies this immutable revision.
