@@ -332,12 +332,18 @@ The bundle contains:
   and modern `TEST_DRM_BUS_DISCOVERY` executables, with source and graph
   validators that reject a two-main source union and a raw `detect.c` graph
   union;
-- cscope, Universal Ctags, and GNU Global databases;
+- a relocatable cscope database plus Universal Ctags and GNU Global databases;
 - known-good `main` and known-bad missing-symbol calibration results;
 - compiler include dependencies as Make syntax, DOT, and SVG;
 - explicit callback-binding search results with known-good and missing-binding
   calibration artifacts;
 - lizard and scc complexity inventories;
+- calibrated text-and-binary rejection of the generating checkout and output
+  directory paths;
+- calibrated rejection of commit, branch, worktree-status, or source-byte
+  drift that remains at the final live-checkout rescan;
+- one read-only, hash-verified source snapshot shared by every analyzer, plus a
+  separately hashed generated-header overlay for compiler dependency analysis;
 - exact tool versions and a final internally verified `SHA256SUMS` manifest.
 
 Universal Ctags 6.2.1 emits one options notice and two Cargo/TOML parser warnings
@@ -347,12 +353,41 @@ every other diagnostic, and retains the original bytes in `ctags.stderr`.
 Positive and negative symbol calibrations separately determine whether the C
 index is usable.
 
+Cscope writes its build directory into the database header. The script uses the
+complete non-quick database for this bounded corpus and builds it from the
+tracked half of the analysis snapshot, which contains exactly the tracked
+denominator. It replaces the generated header with a fixed `.` root, adjusts
+the single trailer offset, and proves the result through
+`cscope -d -P SOURCE_ROOT` from the output directory. A file-list query must
+equal `source-files.txt`, so recursive include discovery cannot admit the
+ignored generated version header. The fixed header removes the build path
+without introducing quick-index offsets that refer to its former byte positions.
+
+GNU Global uses its SQLite backend so repeated generation preserves identical
+database bytes, and its complete path query must equal `source-files.txt`.
+Ripgrep emits callback matches with one worker, and scc emits name-sorted
+per-file records with one worker and one queue slot. These controls remove
+scheduler-dependent record order from the retained bundle.
+
+The generator captures the commit, branch, worktree status, complete source
+denominator, and generated version header before analysis. It copies those
+bytes into separate tracked and generated-input areas, verifies their hashes,
+removes their write permissions, and runs every analyzer from the tracked
+snapshot. The compiler dependency pass also reads the generated-input overlay.
+A transient live-checkout edit after snapshot verification cannot mix analyzer
+inputs. The final live-checkout rescan rejects commit, branch, status, tracked
+source, or generated-input drift that remains at that boundary. Calibrated
+commit, branch, status, source-denominator, and generated-input mutations
+exercise the comparison edges.
+
 The tracked denominator excludes `include/version.h`, whose ignored build
 identity can survive while `git status --short` remains empty. Every source
 index, lexical graph, callback inventory, and complexity consumer derives from
 the validated denominator or its exact C or runtime subset. The Makefile
 regenerates `include/version.h` before the compiler include graph records it as
-a build dependency.
+a build dependency. The retained indexes identify sources relative to the
+repository root. A calibrated final scan rejects generating checkout and output
+paths before `SHA256SUMS` binds the bundle.
 
 These products prove lexical structure, indexed reachability, and the exact
 `TEST_DRM_BUS_DISCOVERY` branch selection represented by the two configured

@@ -148,7 +148,13 @@ GNU Global indexes, compiler dependency graphs, complexity reports, tool
 identities, calibration results, and a verified SHA-256 manifest. The ignored
 generated `include/version.h` stays outside the tracked denominator and enters
 only the compiler include graph as a regenerated build dependency. The
-destination must be empty.
+destination must be empty. Retained artifacts use repository-relative source
+paths and reject both the generating checkout path and destination path across
+text and binary products. The cscope database carries a fixed `.` root and uses
+`cscope -d -P SOURCE_ROOT` when queried from a retained bundle. Every analyzer
+reads one hash-verified, read-only snapshot of the tracked source denominator;
+the compiler dependency graph also reads a separately hashed generated-header
+overlay.
 
 ```sh
 source_intelligence_dir=$(mktemp -d)
