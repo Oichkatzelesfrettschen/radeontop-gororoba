@@ -63,10 +63,14 @@ Dump mode writes one window per line. `-` means stdout exactly; a name such as
 Every dump invocation starts with a `radeontop_capture_v1` JSON header. It binds
 the readable version to one clean Git object, exact production source-input
 manifest and digest, exact build manifest and digest, boot, device, and command
-bytes. Dump mode rejects dirty and unknown source identities because no
-immutable object can reconstruct their bytes. The same canonical manifests
-install under `/usr/share/radeontop/`, and their byte encoding in the header is
-`byte-u00xx`.
+bytes. A Git checkout derives `clean` from Git. An exported tree derives
+`clean` only when the caller supplies the independently retained SHA-256 of its
+complete source baseline. The build manifest records that admitted digest.
+The authenticated baseline also binds the generated export metadata, so a
+caller cannot substitute another valid-looking version or Git object.
+Dump mode rejects dirty and unknown source identities because no immutable
+object reconstructs their bytes. The same canonical manifests install under
+`/usr/share/radeontop/`, and their byte encoding in the header is `byte-u00xx`.
 Each data line retains its legacy human-readable fields and ends with an
 `evidence_v2` JSON object containing the run UUID, exact timing, attempted and
 missed slots, capabilities, per-signal validity, clock means, endpoint states,
@@ -116,11 +120,27 @@ make install PREFIX=/usr DESTDIR=./staging
 `make dist` exports committed `HEAD` without changing the worktree. The archive
 carries its source object and version in a generated Makefile fragment, retains
 the identity recipe for the downstream compiler and flags, and writes a
-deterministic gzip stream plus a SHA-256 sidecar. `DIST_OUTPUT_DIR` selects the
-explicit destination.
+deterministic gzip stream, its SHA-256 sidecar, and a separate source-baseline
+SHA-256 sidecar. The archive-internal baseline has no authority by itself, so an
+unanchored exported build reports `SOURCE_STATE=unknown`. `DIST_OUTPUT_DIR`
+selects the explicit destination.
 
 ```sh
 make dist DIST_OUTPUT_DIR=./dist-output
+```
+
+A clean exported build receives `SOURCE_BASELINE_SHA256` from a digest retained
+outside the extracted tree. The source-baseline sidecar supplies that value only
+after its digest is retained through an independent channel. The `.tgz.sha256`
+manifest hashes both the archive and the source-baseline sidecar and publishes
+last, so an independently retained copy authenticates the complete pair. A
+separately retained archive digest also authenticates the archive-internal
+baseline, whose SHA-256 the caller then passes explicitly.
+
+```sh
+baseline_sha256=$(awk '{print $1}' \
+	../radeontop-VERSION.source-baseline.sha256)
+make SOURCE_BASELINE_SHA256="$baseline_sha256"
 ```
 
 Build options take `1` to enable a lane:

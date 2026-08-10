@@ -40,6 +40,7 @@ VERSION ?=
 SOURCE_COMMIT ?=
 SOURCE_STATE ?=
 SOURCE_BASELINE ?=
+SOURCE_BASELINE_SHA256 ?=
 
 bin = radeontop
 xcblib = libradeontop_xcb.so
@@ -250,6 +251,7 @@ $(verh): export RADEONTOP_VERSION = $(VERSION)
 $(verh): export RADEONTOP_SOURCE_COMMIT = $(SOURCE_COMMIT)
 $(verh): export RADEONTOP_SOURCE_STATE = $(SOURCE_STATE)
 $(verh): export RADEONTOP_SOURCE_BASELINE = $(SOURCE_BASELINE)
+$(verh): export RADEONTOP_SOURCE_BASELINE_SHA256 = $(SOURCE_BASELINE_SHA256)
 $(verh): export RADEONTOP_BUILD_CC = $(CC)
 $(verh): export RADEONTOP_BUILD_CC_VERSION = $(shell $(CC) --version 2>/dev/null | sed -n '1p')
 $(verh): export RADEONTOP_BUILD_CPPFLAGS = $(CPPFLAGS)
@@ -322,7 +324,8 @@ dist:
 	scratch=$$(mktemp -d "$${TMPDIR:-/tmp}/radeontop-dist.XXXXXX"); \
 	archive_output=; \
 	sidecar_output=; \
-	trap 'rm -rf "$$scratch"; test -z "$$archive_output" || rm -f "$$archive_output"; test -z "$$sidecar_output" || rm -f "$$sidecar_output"' 0; \
+	baseline_sidecar_output=; \
+	trap 'rm -rf "$$scratch"; test -z "$$archive_output" || rm -f "$$archive_output"; test -z "$$sidecar_output" || rm -f "$$sidecar_output"; test -z "$$baseline_sidecar_output" || rm -f "$$baseline_sidecar_output"' 0; \
 	trap 'exit 129' 1; \
 	trap 'exit 130' 2; \
 	trap 'exit 143' 15; \
@@ -334,7 +337,7 @@ dist:
 	{ \
 		printf 'VERSION ?= %s\n' "$$version"; \
 		printf 'SOURCE_COMMIT ?= %s\n' "$$commit"; \
-		printf '%s\n' 'SOURCE_STATE ?= clean'; \
+		printf '%s\n' 'SOURCE_STATE ?= unknown'; \
 		printf 'SOURCE_BASELINE ?= %s\n' "$(source_export_baseline)"; \
 	} > "$$export_root/$(source_export_metadata)"; \
 	chmod 0644 "$$export_root/$(source_export_metadata)"; \
@@ -346,14 +349,31 @@ dist:
 		done \
 	) > "$$export_root/$(source_export_baseline)"; \
 	chmod 0644 "$$export_root/$(source_export_baseline)"; \
+	baseline_sha256=$$(sha256sum -- \
+		"$$export_root/$(source_export_baseline)" | awk '{print $$1}'); \
 	tar --sort=name --mtime="@$$epoch" --owner=0 --group=0 --numeric-owner \
 		-C "$$scratch" -cf "$$scratch/archive.tar" "$$name"; \
 	archive_output=$$(mktemp "$$output_dir/.radeontop-dist.XXXXXX"); \
 	gzip -n -9 -c "$$scratch/archive.tar" > "$$archive_output"; \
+	baseline_sidecar_output=$$(mktemp \
+		"$$output_dir/.radeontop-dist-source-baseline.XXXXXX"); \
+	printf '%s  %s\n' "$$baseline_sha256" "$(source_export_baseline)" \
+		> "$$baseline_sidecar_output"; \
+	sidecar_output=$$(mktemp "$$output_dir/.radeontop-dist-sha256.XXXXXX"); \
+	archive_sha256=$$(sha256sum -- "$$archive_output" | awk '{print $$1}'); \
+	baseline_sidecar_sha256=$$(sha256sum -- \
+		"$$baseline_sidecar_output" | awk '{print $$1}'); \
+	printf '%s  %s\n%s  %s\n' \
+		"$$archive_sha256" "$$name.tgz" \
+		"$$baseline_sidecar_sha256" "$$name.source-baseline.sha256" \
+		> "$$sidecar_output"; \
 	mv -f "$$archive_output" "$$output_dir/$$name.tgz"; \
 	archive_output=; \
-	sidecar_output=$$(mktemp "$$output_dir/.radeontop-dist-sha256.XXXXXX"); \
-	( cd "$$output_dir" && sha256sum "$$name.tgz" ) > "$$sidecar_output"; \
+	mv -f "$$baseline_sidecar_output" \
+		"$$output_dir/$$name.source-baseline.sha256"; \
+	baseline_sidecar_output=; \
 	mv -f "$$sidecar_output" "$$output_dir/$$name.tgz.sha256"; \
 	sidecar_output=; \
-	printf '%s\n' "$$output_dir/$$name.tgz" "$$output_dir/$$name.tgz.sha256"
+	printf '%s\n' "$$output_dir/$$name.tgz" \
+		"$$output_dir/$$name.tgz.sha256" \
+		"$$output_dir/$$name.source-baseline.sha256"

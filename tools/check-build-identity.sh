@@ -91,7 +91,9 @@ retained_build_sha256=$(sha256sum \
 	"$fixture/include/radeontop-build-manifest.txt" | awk '{print $1}')
 [ "$retained_source_sha256" = "$clean_source_sha256" ]
 [ "$retained_build_sha256" = "$clean_build_sha256" ]
-grep -Fq 'schema=radeontop_build_manifest_v1' \
+grep -Fq 'schema=radeontop_build_manifest_v2' \
+	"$fixture/include/radeontop-build-manifest.txt"
+grep -Fq 'source_baseline_sha256=none' \
 	"$fixture/include/radeontop-build-manifest.txt"
 grep -Fq "source_commit=$fixture_commit" \
 	"$fixture/include/radeontop-build-manifest.txt"
@@ -148,41 +150,124 @@ mkdir -p "$exported/include"
 cp "$fixture/getver.sh" "$exported/getver.sh"
 cp "$fixture/input.c" "$exported/input.c"
 exported_baseline=include/radeontop-source-export-baseline.sha256
+exported_metadata=include/radeontop-source-export.mk
+exported_version=1.4.rexport.g000000000000
+{
+	printf 'VERSION ?= %s\n' "$exported_version"
+	printf 'SOURCE_COMMIT ?= %s\n' "$fixture_commit"
+	printf '%s\n' 'SOURCE_STATE ?= unknown'
+	printf 'SOURCE_BASELINE ?= %s\n' "$exported_baseline"
+} > "$exported/$exported_metadata"
 (
 	cd "$exported"
-	sha256sum getver.sh input.c > "$exported_baseline"
+	sha256sum getver.sh "$exported_metadata" input.c > "$exported_baseline"
 )
+exported_baseline_sha256=$(sha256sum "$exported/$exported_baseline" | awk '{print $1}')
+
+# A baseline carried inside the export has no authority until the caller binds
+# its exact bytes through an independently retained digest.
+(
+	cd "$exported"
+	RADEONTOP_VERSION="$exported_version" \
+	RADEONTOP_SOURCE_COMMIT="$fixture_commit" \
+	RADEONTOP_SOURCE_STATE=unknown \
+	RADEONTOP_SOURCE_BASELINE="$exported_baseline" \
+	./getver.sh getver.sh "$exported_baseline" "$exported_metadata" input.c -- \
+		getver.sh "$exported_metadata" input.c
+)
+grep -Fq '#define RADEONTOP_SOURCE_STATE "unknown"' \
+	"$exported/include/version.h"
+grep -Fq 'source_baseline_sha256=none' \
+	"$exported/include/radeontop-build-manifest.txt"
 if (
 	cd "$exported"
-	RADEONTOP_VERSION=1.4.rexport.g000000000000 \
+	RADEONTOP_VERSION="$exported_version" \
 	RADEONTOP_SOURCE_COMMIT="$fixture_commit" \
 	RADEONTOP_SOURCE_STATE=clean \
-	./getver.sh getver.sh input.c -- getver.sh input.c
+	RADEONTOP_SOURCE_BASELINE="$exported_baseline" \
+	./getver.sh getver.sh "$exported_baseline" "$exported_metadata" input.c -- \
+		getver.sh "$exported_metadata" input.c
 ) >/dev/null 2>&1; then
-	echo "exported clean source state was accepted without a baseline" >&2
+	echo "exported clean source state was accepted without an external baseline digest" >&2
 	exit 1
 fi
 (
 	cd "$exported"
-	RADEONTOP_VERSION=1.4.rexport.g000000000000 \
+	RADEONTOP_VERSION="$exported_version" \
 	RADEONTOP_SOURCE_COMMIT="$fixture_commit" \
 	RADEONTOP_SOURCE_STATE=clean \
 	RADEONTOP_SOURCE_BASELINE="$exported_baseline" \
-	./getver.sh getver.sh "$exported_baseline" input.c -- getver.sh input.c
+	RADEONTOP_SOURCE_BASELINE_SHA256="$exported_baseline_sha256" \
+	./getver.sh getver.sh "$exported_baseline" "$exported_metadata" input.c -- \
+		getver.sh "$exported_metadata" input.c
 )
 grep -Fq "#define RADEONTOP_SOURCE_COMMIT \"$fixture_commit\"" \
 	"$exported/include/version.h"
 grep -Fq '#define RADEONTOP_SOURCE_STATE "clean"' \
 	"$exported/include/version.h"
+grep -Fq "source_baseline_sha256=$exported_baseline_sha256" \
+	"$exported/include/radeontop-build-manifest.txt"
 
-sha256_fixture_commit=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+saved_input="$scratch/exported-input.c"
+saved_baseline="$scratch/exported-baseline.sha256"
+saved_metadata="$scratch/exported-metadata.mk"
+cp "$exported/input.c" "$saved_input"
+cp "$exported/$exported_baseline" "$saved_baseline"
+cp "$exported/$exported_metadata" "$saved_metadata"
+printf '%s\n' 'int synchronized_mutation(void) { return 2; }' >> "$exported/input.c"
 (
 	cd "$exported"
-	RADEONTOP_VERSION=1.4.rexport.g000000000000 \
+	sha256sum getver.sh "$exported_metadata" input.c > "$exported_baseline"
+)
+(
+	cd "$exported"
+	RADEONTOP_VERSION="$exported_version" \
+	RADEONTOP_SOURCE_COMMIT="$fixture_commit" \
+	RADEONTOP_SOURCE_STATE=unknown \
+	RADEONTOP_SOURCE_BASELINE="$exported_baseline" \
+	./getver.sh getver.sh "$exported_baseline" "$exported_metadata" input.c -- \
+		getver.sh "$exported_metadata" input.c
+)
+grep -Fq '#define RADEONTOP_SOURCE_STATE "unknown"' \
+	"$exported/include/version.h"
+if (
+	cd "$exported"
+	RADEONTOP_VERSION="$exported_version" \
+	RADEONTOP_SOURCE_COMMIT="$fixture_commit" \
+	RADEONTOP_SOURCE_STATE=unknown \
+	RADEONTOP_SOURCE_BASELINE="$exported_baseline" \
+	RADEONTOP_SOURCE_BASELINE_SHA256="$exported_baseline_sha256" \
+	./getver.sh getver.sh "$exported_baseline" "$exported_metadata" input.c -- \
+		getver.sh "$exported_metadata" input.c
+) >/dev/null 2>&1; then
+	echo "synchronized source and baseline mutation passed the external digest" >&2
+	exit 1
+fi
+cp "$saved_input" "$exported/input.c"
+cp "$saved_baseline" "$exported/$exported_baseline"
+
+sha256_fixture_commit=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+{
+	printf 'VERSION ?= %s\n' "$exported_version"
+	printf 'SOURCE_COMMIT ?= %s\n' "$sha256_fixture_commit"
+	printf '%s\n' 'SOURCE_STATE ?= unknown'
+	printf 'SOURCE_BASELINE ?= %s\n' "$exported_baseline"
+} > "$exported/$exported_metadata"
+(
+	cd "$exported"
+	sha256sum getver.sh "$exported_metadata" input.c > "$exported_baseline"
+)
+sha256_exported_baseline_sha256=$(sha256sum \
+	"$exported/$exported_baseline" | awk '{print $1}')
+(
+	cd "$exported"
+	RADEONTOP_VERSION="$exported_version" \
 	RADEONTOP_SOURCE_COMMIT="$sha256_fixture_commit" \
 	RADEONTOP_SOURCE_STATE=clean \
 	RADEONTOP_SOURCE_BASELINE="$exported_baseline" \
-	./getver.sh getver.sh "$exported_baseline" input.c -- getver.sh input.c
+	RADEONTOP_SOURCE_BASELINE_SHA256="$sha256_exported_baseline_sha256" \
+	./getver.sh getver.sh "$exported_baseline" "$exported_metadata" input.c -- \
+		getver.sh "$exported_metadata" input.c
 )
 grep -Fq "#define RADEONTOP_SOURCE_COMMIT \"$sha256_fixture_commit\"" \
 	"$exported/include/version.h"
@@ -196,6 +281,37 @@ exported_header_sha256=$(awk '
 	}
 ' "$exported/include/version.h")
 [ "$exported_source_sha256" = "$exported_header_sha256" ]
+cp "$saved_metadata" "$exported/$exported_metadata"
+cp "$saved_baseline" "$exported/$exported_baseline"
+
+wrong_valid_commit=0123456789abcdef0123456789abcdef01234567
+if (
+	cd "$exported"
+	RADEONTOP_VERSION="$exported_version" \
+	RADEONTOP_SOURCE_COMMIT="$wrong_valid_commit" \
+	RADEONTOP_SOURCE_STATE=clean \
+	RADEONTOP_SOURCE_BASELINE="$exported_baseline" \
+	RADEONTOP_SOURCE_BASELINE_SHA256="$exported_baseline_sha256" \
+	./getver.sh getver.sh "$exported_baseline" "$exported_metadata" input.c -- \
+		getver.sh "$exported_metadata" input.c
+) >/dev/null 2>&1; then
+	echo "valid but false source commit passed authenticated export metadata" >&2
+	exit 1
+fi
+
+if (
+	cd "$exported"
+	RADEONTOP_VERSION=1.4.rexport.g111111111111 \
+	RADEONTOP_SOURCE_COMMIT="$fixture_commit" \
+	RADEONTOP_SOURCE_STATE=clean \
+	RADEONTOP_SOURCE_BASELINE="$exported_baseline" \
+	RADEONTOP_SOURCE_BASELINE_SHA256="$exported_baseline_sha256" \
+	./getver.sh getver.sh "$exported_baseline" "$exported_metadata" input.c -- \
+		getver.sh "$exported_metadata" input.c
+) >/dev/null 2>&1; then
+	echo "valid but false version passed authenticated export metadata" >&2
+	exit 1
+fi
 
 if (
 	cd "$exported"
@@ -208,11 +324,13 @@ fi
 
 if (
 	cd "$exported"
-		RADEONTOP_VERSION=1.4.rexport.g000000000000 \
+		RADEONTOP_VERSION="$exported_version" \
 		RADEONTOP_SOURCE_COMMIT=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde \
 		RADEONTOP_SOURCE_STATE=clean \
 		RADEONTOP_SOURCE_BASELINE="$exported_baseline" \
-		./getver.sh getver.sh "$exported_baseline" input.c -- getver.sh input.c
+		RADEONTOP_SOURCE_BASELINE_SHA256="$exported_baseline_sha256" \
+		./getver.sh getver.sh "$exported_baseline" "$exported_metadata" input.c -- \
+			getver.sh "$exported_metadata" input.c
 ) >/dev/null 2>&1; then
 	echo "63-character source object accepted" >&2
 	exit 1

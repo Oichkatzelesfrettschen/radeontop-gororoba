@@ -22,7 +22,7 @@ supportable.
 | `rs480_observation.c` | Strict three-key debugfs intake | RS480 direct path | `tests/rs480_observation_test.c` |
 | `dump.c` | Generation wait, legacy rendering, evidence object, durable output | file or stdout | unit format tests plus target capture |
 | `ui.c` | Whole-snapshot terminal presentation | operator | compiler analysis and interactive run |
-| `tools/check-dist.sh` | Immutable source export, downstream identity regeneration, deterministic archive | release source consumers | clean and dirty fixtures plus digest mutation |
+| `tools/check-dist.sh` | Deterministic source export, external baseline admission, downstream identity regeneration | release source consumers | unanchored, clean, dirty, synchronized-mutation, and restoration fixtures |
 | `tools/radeontop-source-intelligence.sh` | Bounded source maps and calibrated indexes | maintainers and audits | empty-output invocation plus hash manifest |
 
 The Makefile enumerates production translation units. A new root-level C file
@@ -237,26 +237,40 @@ published header therefore discloses a host-linkable identifier that remains
 stable for that boot's lifetime.
 
 The source manifest is the sorted `sha256sum` preimage for every production
-input. The build manifest records its schema, source identity, and the exact
-version, compiler, compiler version, preprocessor flags, compiler flags, linker
-flags, libraries, and option string as reversible hexadecimal byte fields. The
-capture embeds both manifest byte strings and their SHA-256 values, and
-installation retains the same bytes under `/usr/share/radeontop/`. A reader can
-therefore recompute each digest without access to the build host. A clean source
-commit supplies the content behind every source-manifest row.
+input. The build manifest records its schema, source identity, admitted export
+baseline digest, and the exact version, compiler, compiler version,
+preprocessor flags, compiler flags, linker flags, libraries, and option string
+as reversible hexadecimal byte fields. A Git checkout records `none` for the
+export baseline. An authenticated exported build records the caller-supplied
+64-hex digest. The capture embeds both manifest byte strings and their SHA-256
+values, and installation retains the same bytes under `/usr/share/radeontop/`.
+A reader therefore recomputes each digest without access to the build host. A
+clean source commit supplies the content behind every source-manifest row.
 
 `make dist` exports committed `HEAD` through `git archive` into a temporary
 tree, then adds `include/radeontop-source-export.mk` with the exact Git
-description, object ID, and clean state. The exported Makefile loads that
-fragment and keeps `getver.sh` active, so each downstream build recomputes the
-source manifest over the archive bytes and recomputes the build manifest over
-its own compiler, flags, libraries, and options. The distribution target never
-edits the checkout. The caller supplies the output directory explicitly. The
-target normalizes path order, timestamp, ownership, and gzip metadata and
-publishes a SHA-256 sidecar. `tools/check-dist.sh` proves two
-exports are byte-identical, a dirty tracked Makefile survives unchanged and
-stays outside the archive, downstream flag changes alter only build identity,
-and source-object and archive mutations fail their gates.
+description, object ID, unknown state, and baseline path. The exported Makefile
+loads that fragment and keeps `getver.sh` active, so each downstream build
+recomputes the source manifest over the archive bytes and recomputes the build
+manifest over its own compiler, flags, libraries, and options. The complete
+baseline travels inside the archive, while its expected SHA-256 travels as a
+separate sidecar. The in-tree baseline never authenticates itself. A caller
+supplies `SOURCE_BASELINE_SHA256` from independently retained release metadata,
+or computes it only after verifying an independently retained archive digest.
+The baseline covers the fixed-path export metadata. `getver.sh` snapshots those
+bytes, verifies their baseline and source-manifest rows, parses their exact
+four-line schema, and binds the build version and source commit to their values.
+No supplied digest leaves the state `unknown`; a matching digest admits row
+comparison as `clean` or `dirty`; a digest mismatch stops the build before row
+parsing. The distribution target never edits the checkout. The caller supplies
+the output directory explicitly. The target normalizes path order, timestamp,
+ownership, and gzip metadata. The `.tgz.sha256` manifest hashes the archive and
+the source-baseline sidecar and publishes after both, so it is the complete-pair
+commit marker when its bytes arrive through an independent channel.
+`tools/check-dist.sh` proves two exports are byte-identical, a dirty tracked
+Makefile survives unchanged and stays outside the archive, downstream flag
+changes alter only build identity, source-only mutation reports dirty, and
+synchronized source-plus-baseline mutation fails the original external digest.
 
 Each legacy data line ends with an `evidence_v2` JSON object. It repeats the run
 UUID and preserves exact slot accounting, capability bits, five signal
