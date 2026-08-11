@@ -679,13 +679,18 @@ void initbits(int fam) {
 		bits.e2  = (1U << 17);  // E2_BUSY -- the 2D draw engine
 		bits.rb2d = (1U << 18) | (1U << 27);  // RB2D|CBA2D -- 2D render backend
 		bits.cf  = (1U << 14);  // CF_PIPE_BUSY -- the command/clause fetch pipe
-		// A retained RS482 RBBM_STATUS histogram observes GUI, GA,
-		// CP_CMDSTRM, ENG_EV, CF_PIPE, and VAP assertions under its named
-		// loads and sample rates.  The same finite record does not observe
-		// RB3D, RE, TAM, TDM, PB, or TIM.  Those lanes stay masked because a
-		// permanent zero would overstate the bounded non-observation.  Active
-		// reads in the GA and ZB 0x4xxx blocks remain probe-only: an RS482
-		// read of 0x42d0 under GUI activity deep-wedged the host.
+		// The retained RS482 workload matrix observes GUI, GA, CP_CMDSTRM,
+		// ENG_EV, CF_PIPE, and VAP assertions.  E2_BUSY and the
+		// RB2D_BUSY|CBA2D_BUSY union remain clear across its modesetting plus
+		// glamor samples, which contain no verified execution of the legacy
+		// radeon EXA solid or copy callbacks.  That non-observation bounds the
+		// sampled stack and workloads rather than RS482 field exposure, so the
+		// two architectural 2D fields remain mapped.
+		// The same finite record does not observe RB3D, RE, TAM, TDM, PB, or
+		// TIM.  Those lanes stay masked because a permanent zero would
+		// overstate the bounded non-observation.  Active reads in the GA and
+		// ZB 0x4xxx blocks remain probe-only: an RS482 read of 0x42d0 under
+		// GUI activity deep-wedged the host.
 		bits.sc = bits.ta = bits.cb = bits.db = 0;
 		bits.tc = bits.sx = bits.sh = bits.spi = bits.smx = bits.cr = 0;
 		bits.uvd = 0;   // RS482 has no UVD -- the 3D pipe is the only decoder
