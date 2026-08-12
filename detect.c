@@ -692,7 +692,9 @@ void initbits(int fam) {
 		// callbacks both 2D gauges assert above 0.99, so the fields are exposed
 		// and the glamor zero bounds that software route.  GA_BUSY and VAP_BUSY
 		// stay clear across the same 2D runs, because the blitter path skips
-		// geometry assembly and the vertex front end.
+		// geometry assembly and the vertex front end, so a pa gauge at zero
+		// beside a saturated gui gauge is those fields reporting an idle block
+		// rather than a broken lane.
 		// The same records do not observe RB3D, RE, TAM, TDM, PB, or TIM.
 		// Those lanes stay masked because a permanent zero would overstate the
 		// bounded non-observation.  Active reads in the GA and ZB 0x4xxx blocks
