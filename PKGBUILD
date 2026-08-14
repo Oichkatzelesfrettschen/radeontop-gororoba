@@ -28,7 +28,7 @@ _basecommit='15521706464b78dc9af60495b648b9d536b4d085'
 # to a commit already merged to master, because a squash or rebase merge
 # rewrites the object ids a pull request head carried and can leave a pinned
 # pre-merge object unreachable.
-_commit='f105aa8dd60b2fe36d4d22d94d496e478fa45806'
+_commit='1b89873e9ba4167bf71eb1ad516fe581e59d69d5'
 
 # pkgver identifies the source and pkgrel identifies the packaging.  Changing
 # _commit changes pkgver and resets pkgrel to 1; changing the recipe, the
@@ -36,7 +36,7 @@ _commit='f105aa8dd60b2fe36d4d22d94d496e478fa45806'
 # _commit increments pkgrel.  The literal below equals what pkgver() derives for
 # _commit, and `makepkg --nobuild && git diff --exit-code PKGBUILD` proves it,
 # because makepkg rewrites this line when the two disagree.
-pkgver=1.4.r110.gf105aa8dd60b
+pkgver=1.4.r117.g1b89873e9ba4
 pkgrel=1
 
 pkgdesc="GPU utilization monitor with RS480/RS482 (RS4xx) BAR2 read-path"
