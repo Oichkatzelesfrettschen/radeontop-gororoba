@@ -26,6 +26,7 @@
 // thread; publication copies a finished snapshot under the mutex instead.
 struct collector_accumulator {
 	uint64_t lane_busy[COLLECTOR_LANE_COUNT];
+	uint64_t status_bit_busy[COLLECTOR_STATUS_BIT_COUNT];
 
 	struct collector_signal_stats status;
 	struct collector_signal_stats uvd;
@@ -216,6 +217,16 @@ static int sample_once(struct collector *collector,
 				if (mask && (value & mask))
 					accumulator->lane_busy[lane]++;
 			}
+
+			// The per-position census runs over the same valid read
+			// and shares its denominator.  It covers every position
+			// rather than the mapped ones, so a union lane keeps a
+			// per-bit decomposition and an unmapped bit that asserts
+			// leaves a record instead of vanishing.
+			for (int bit = 0; bit < COLLECTOR_STATUS_BIT_COUNT; bit++) {
+				if (value & (UINT32_C(1) << bit))
+					accumulator->status_bit_busy[bit]++;
+			}
 		}
 
 		if (result == COLLECTOR_READ_FATAL)
@@ -319,6 +330,8 @@ static enum collector_terminal_cause publish(struct collector *collector,
 	snapshot.capabilities = backend->capabilities;
 
 	memcpy(snapshot.lane_busy, accumulator->lane_busy, sizeof(snapshot.lane_busy));
+	memcpy(snapshot.status_bit_busy, accumulator->status_bit_busy,
+		sizeof(snapshot.status_bit_busy));
 
 	// VRAM and GTT are point measurements at the window endpoint, not means
 	// over the window, and each carries its own validity.

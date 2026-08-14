@@ -56,6 +56,10 @@ enum collector_lane {
 	COLLECTOR_LANE_COUNT
 };
 
+// The engine-status register is 32 bits wide on every family this tool reads,
+// so a per-position census spans exactly that many counters.
+#define COLLECTOR_STATUS_BIT_COUNT 32
+
 // A mask selects the bits within its source register.  A multi-bit mask reads
 // as a union: the lane is busy when any of its bits is set, which is what the
 // R300 rb2d pair (RB2D|CBA2D) and the R600 vgt pair need.  A zero mask leaves
@@ -216,6 +220,14 @@ struct collector_snapshot {
 	// Busy hits per lane.  The denominator is the valid read count of the
 	// register the lane comes from, never the nominal slot count.
 	uint64_t lane_busy[COLLECTOR_LANE_COUNT];
+
+	// Set hits per engine-status bit position, over the same valid reads the
+	// status signal counts.  A lane whose mask unions several bits reports one
+	// number for all of them, so an RS482 rb2d reading of 1.0 leaves open which
+	// of RB2D_BUSY and CBA2D_BUSY carried it; this census answers that from the
+	// mapped collector.  It covers every position, including those no lane
+	// maps, so a bit the family decode leaves unnamed still leaves a record.
+	uint64_t status_bit_busy[COLLECTOR_STATUS_BIT_COUNT];
 
 	// Means over their own valid readings, accumulated online so a long
 	// window cannot overflow an integral sum.
