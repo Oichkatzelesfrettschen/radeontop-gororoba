@@ -677,15 +677,29 @@ void initbits(int fam) {
 		bits.ee  = (1U << 15);  // ENG_EV_BUSY -- the event engine proper
 		bits.cp  = (1U << 16);  // CP_CMDSTRM_BUSY -- PM4 command stream executing
 		bits.e2  = (1U << 17);  // E2_BUSY -- the 2D draw engine
+		// CBA2D carries this union on RS482: a raw RBBM_STATUS census under
+		// EXA solid fill and window copy asserts bit 27 in every sample and
+		// bit 18 in none, so the gauge reports the 2D cache and blit
+		// arbitrator rather than the render backend under those two operation
+		// classes.
 		bits.rb2d = (1U << 18) | (1U << 27);  // RB2D|CBA2D -- 2D render backend
 		bits.cf  = (1U << 14);  // CF_PIPE_BUSY -- the command/clause fetch pipe
-		// A retained RS482 RBBM_STATUS histogram observes GUI, GA,
-		// CP_CMDSTRM, ENG_EV, CF_PIPE, and VAP assertions under its named
-		// loads and sample rates.  The same finite record does not observe
-		// RB3D, RE, TAM, TDM, PB, or TIM.  Those lanes stay masked because a
-		// permanent zero would overstate the bounded non-observation.  Active
-		// reads in the GA and ZB 0x4xxx blocks remain probe-only: an RS482
-		// read of 0x42d0 under GUI activity deep-wedged the host.
+		// A retained RS482 matrix observes GUI, GA, CP_CMDSTRM, ENG_EV,
+		// CF_PIPE, and VAP assertions under 3D loads on a modesetting plus
+		// glamor stack, where E2_BUSY and the RB2D_BUSY|CBA2D_BUSY union stay
+		// clear because glamor runs 2D as OpenGL on the 3D pipe and reaches no
+		// legacy 2D callback.  Under the xf86-video-ati EXA solid and copy
+		// callbacks both 2D gauges assert above 0.99, so the fields are exposed
+		// and the glamor zero bounds that software route.  GA_BUSY and VAP_BUSY
+		// stay clear across the same 2D runs, because the blitter path skips
+		// geometry assembly and the vertex front end, so a pa gauge at zero
+		// beside a saturated gui gauge is those fields reporting an idle block
+		// rather than a broken lane.
+		// The same records do not observe RB3D, RE, TAM, TDM, PB, or TIM.
+		// Those lanes stay masked because a permanent zero would overstate the
+		// bounded non-observation.  Active reads in the GA and ZB 0x4xxx blocks
+		// remain probe-only: an RS482 read of 0x42d0 under GUI activity
+		// deep-wedged the host.
 		bits.sc = bits.ta = bits.cb = bits.db = 0;
 		bits.tc = bits.sx = bits.sh = bits.spi = bits.smx = bits.cr = 0;
 		bits.uvd = 0;   // RS482 has no UVD -- the 3D pipe is the only decoder
