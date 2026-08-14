@@ -46,6 +46,15 @@ restate one asks for a narrower contract or evidence class.
   rather than relying on the indirect-call structure to force one.
   `_Static_assert` proves each offset plus its access width lands inside the
   mapping it reads.
+- Each window carries the mean read cost beside the maximum, over its own
+  denominator, and `collector_read_share` turns the mean into the fraction of
+  the window the device reads occupied. `collector_lane_fraction` divides by the
+  reads that validated, so the duty figure stays truthful at whatever rate the
+  sampler reaches and `cov` carries the shortfall; the share attributes it.
+  A tail read moves the maximum by two orders and leaves the mean where it was,
+  so the two answer different questions and both are published. Admission keeps
+  its fixed ceiling, because what binds the rate belongs to the host and the boot
+  rather than to the part.
 - `--dither-seed N` offsets each sample inside its own slot, so a workload
   periodic at a harmonic of the sampling rate meets a moving phase. Each bound
   uses the exact carried slot width, and rejection sampling removes modulo bias.
@@ -343,6 +352,17 @@ ordinary scheduling, then use a controlled real-time policy with the same load
 and rate. A tail that survives both supports device latency; a tail that shrinks
 supports preemption. The run retains full distributions rather than maxima
 alone.
+
+The published mean narrows what the tail can be. An idle sweep over 120, 1000,
+4000, 8000, 200000, 400000, and 1000000 samples per second holds the mean read
+cost between 2639 and 3177 nanoseconds at every rate while single maxima reach
+523 and 858 microseconds, so the tail is a rare excursion rather than a shift in
+the cost of a read, and it does not scale with the requested rate. The same
+sweep bounds the wake-up path from the other side: at 1000000 samples per second
+the worker completes 8596 iterations in the window, roughly 112 microseconds
+each against a mean read of 2854, so the schedule reaches the slot period first
+at every rate the command line admits. A discriminator run separates preemption
+from device latency inside that 112 microseconds.
 
 ### RS482 2D lane discriminator
 

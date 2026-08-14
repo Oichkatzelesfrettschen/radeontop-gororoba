@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: radeontop\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-09 00:00+0000\n"
+"POT-Creation-Date: 2026-08-14 00:00+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -200,57 +200,57 @@ msgstr ""
 msgid "The selected Radeon device has no PCI identity"
 msgstr ""
 
-#: dump.c:186
+#: dump.c:195
 #, c-format
 msgid "Dumping to %s, "
 msgstr ""
 
-#: dump.c:189
+#: dump.c:198
 #, c-format
 msgid "line limit %u.\n"
 msgstr ""
 
-#: dump.c:191
+#: dump.c:200
 msgid "until termination.\n"
 msgstr ""
 
-#: dump.c:201
+#: dump.c:210
 msgid "Can't open file for writing."
 msgstr ""
 
-#: dump.c:205
+#: dump.c:214
 msgid "Another capture owns the output file.\n"
 msgstr ""
 
-#: dump.c:212
+#: dump.c:221
 msgid "Failed writing the capture record boundary.\n"
 msgstr ""
 
-#: dump.c:220
+#: dump.c:229
 msgid "Failed writing the capture provenance header.\n"
 msgstr ""
 
-#: dump.c:273 ui.c:131
+#: dump.c:282 ui.c:131
 msgid "The collector lost the device, stopping.\n"
 msgstr ""
 
-#: dump.c:276 ui.c:133
+#: dump.c:285 ui.c:133
 msgid "The collector clock failed, stopping.\n"
 msgstr ""
 
-#: dump.c:279 ui.c:135
+#: dump.c:288 ui.c:135
 msgid "The collector schedule failed, stopping.\n"
 msgstr ""
 
-#: dump.c:293 ui.c:165
+#: dump.c:302 ui.c:165
 msgid "The collector wait failed, stopping.\n"
 msgstr ""
 
-#: dump.c:299
+#: dump.c:308
 msgid "The capture lost a completed measurement window, stopping.\n"
 msgstr ""
 
-#: dump.c:313 dump.c:323
+#: dump.c:322 dump.c:332
 msgid "Failed writing the dump output.\n"
 msgstr ""
 
@@ -323,60 +323,60 @@ msgstr ""
 msgid "Failed to drop effective privileges"
 msgstr ""
 
-#: radeontop.c:194
+#: radeontop.c:197
 msgid "tick count"
 msgstr ""
 
-#: radeontop.c:208
+#: radeontop.c:212
 msgid "bus number"
 msgstr ""
 
-#: radeontop.c:215
+#: radeontop.c:219
 msgid "dump limit"
 msgstr ""
 
-#: radeontop.c:221
+#: radeontop.c:225
 msgid "dump interval"
 msgstr ""
 
-#: radeontop.c:230
+#: radeontop.c:234
 msgid "dither seed"
 msgstr ""
 
-#: radeontop.c:236
+#: radeontop.c:240
 #, c-format
 msgid "Unexpected operand '%s'\n"
 msgstr ""
 
-#: radeontop.c:249
+#: radeontop.c:253
 msgid "Failed to select the capture numeric locale"
 msgstr ""
 
-#: radeontop.c:261
+#: radeontop.c:265
 msgid "Failed to drop privileges"
 msgstr ""
 
-#: radeontop.c:265
+#: radeontop.c:269
 msgid "Unsupported Radeon PCI ID: no validated family model"
 msgstr ""
 
-#: radeontop.c:277
+#: radeontop.c:281
 msgid "Failed to initialize the collector clock"
 msgstr ""
 
-#: radeontop.c:302
+#: radeontop.c:306
 msgid "Failed to initialize capture provenance"
 msgstr ""
 
-#: radeontop.c:307
+#: radeontop.c:311
 msgid "Failed to initialize the collector"
 msgstr ""
 
-#: radeontop.c:312
+#: radeontop.c:316
 msgid "Failed to start the collector thread"
 msgstr ""
 
-#: radeontop.c:326
+#: radeontop.c:330
 msgid "Failed to join the collector thread.\n"
 msgstr ""
 

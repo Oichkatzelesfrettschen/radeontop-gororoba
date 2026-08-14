@@ -130,6 +130,20 @@ int collector_monotonic_clock_init(struct collector_monotonic_clock *clock);
 void collector_monotonic_clock_destroy(struct collector_monotonic_clock *clock);
 struct collector_clock collector_monotonic_clock_ops(struct collector_monotonic_clock *clock);
 
+// The schedule divides one second into `ticks` slots, so a rate finer than one
+// slot per nanosecond leaves the period quotient at zero and no grid to place;
+// collector_init rejects everything above COLLECTOR_TICKS_ARITHMETIC_MAX for
+// that reason.  COLLECTOR_TICKS_MAX is the tighter ceiling the command line
+// admits, one sample per microsecond.  A rate no run reaches is admitted rather
+// than refused, because what limits the rate is a property of the host and the
+// boot rather than of the part: on RS482 a read costs about 2.9 microseconds
+// against a wake-up round trip near 112, so the sampler falls short at rates
+// well under this ceiling and for a reason no admission check on the read path
+// would name.  Each window publishes its own read cost and read share instead,
+// which separates the two causes on the evidence of the run itself.
+#define COLLECTOR_TICKS_ARITHMETIC_MAX 1000000000U
+#define COLLECTOR_TICKS_MAX 1000000U
+
 struct collector_config {
 	uint32_t ticks;        // nominal sample slots per second
 	uint32_t dumpinterval; // whole seconds of monotonic time per report window
@@ -210,6 +224,17 @@ struct collector_snapshot {
 	uint64_t late_wakeups;
 	uint64_t max_lateness_ns;
 	uint64_t max_read_latency_ns;
+
+	// The read cost averaged over the reads that timed, accumulated online so a
+	// long window cannot overflow an integral sum.  The maximum answers whether
+	// a read ever overran; the mean answers what a read costs, which is the
+	// figure collector_read_share turns into the window fraction the device
+	// took.  A tail read moves the maximum by two orders and leaves the mean
+	// where it was, so the two answer different questions and both are
+	// published.  read_latency_samples is the mean's denominator and travels
+	// with it.
+	double mean_read_latency_ns;
+	uint64_t read_latency_samples;
 
 	struct collector_signal_stats status;
 	struct collector_signal_stats uvd;
@@ -330,6 +355,23 @@ bool collector_lane_missing_data_bounds(const struct collector_snapshot *snapsho
 // Valid status reads over nominal slots.  Read failures can correlate with
 // load, so coverage travels with every status-derived figure.
 double collector_status_coverage(const struct collector_snapshot *snapshot);
+
+// The nominal slot width, the truncated quotient the schedule advances its grid
+// by.  Zero for a rate the schedule cannot place.
+uint64_t collector_slot_period_ns(const struct collector_config *config);
+
+// The fraction of the window the device reads themselves occupied, mean read
+// cost times the reads that ran over the window's own length.  A window whose
+// coverage falls well below one names its cause by this figure: a large share
+// puts the shortfall on the device, and a small one puts it on the wake-up path
+// that placed the samples.  Coverage continues to carry the magnitude.
+//
+// On RS482 the mean read cost holds near 2.9 microseconds from 120 through
+// 1000000 samples per second while the wake-up round trip reaches roughly 112,
+// so the schedule is what binds at every rate the command line admits and the
+// share stays small.  NaN when the window has no length or timed no read.
+double collector_read_share(const struct collector_snapshot *snapshot,
+		const struct collector_config *config);
 
 // Monotonic nanoseconds between two timestamps, for age and lateness.
 int64_t collector_timespec_delta_ns(const struct timespec *from,
