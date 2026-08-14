@@ -231,7 +231,55 @@ static void check_snapshot_evidence(void) {
 	CHECK(strstr(output,
 		"\"vram\":{\"supported\":true,\"valid\":false,\"bytes\":null}") != NULL);
 	CHECK(strstr(output, "\"terminal\"") == NULL);
+	// No status bit asserted, so the census writes an empty object and a
+	// consumer reads every absent position as zero.
+	CHECK(strstr(output, "\"status_bits\":{}") != NULL);
 	CHECK(strchr(output, '\n') == NULL);
+
+	fclose(stream);
+}
+
+// A union lane reports one number for several bits, so the census has to
+// decompose it.  This is the RS482 rb2d case: RB2D_BUSY and CBA2D_BUSY share a
+// gauge, and only the per-position counts say which one carried the reading.
+static void check_status_bit_census(void) {
+	struct collector_snapshot snapshot;
+	struct engine_masks masks;
+	char output[4096];
+	FILE *stream;
+
+	memset(&snapshot, 0, sizeof(snapshot));
+	memset(&masks, 0, sizeof(masks));
+	snapshot.generation = 1;
+	snapshot.nominal_slots = 8;
+	snapshot.attempted_slots = 8;
+	snapshot.status.valid = 8;
+	snapshot.capabilities = COLLECTOR_CAP_STATUS;
+
+	masks.lane[COLLECTOR_LANE_RB2D] = (1U << 18) | (1U << 27);
+	snapshot.lane_busy[COLLECTOR_LANE_RB2D] = 8;
+	snapshot.status_bit_busy[18] = 0;
+	snapshot.status_bit_busy[27] = 8;
+	snapshot.status_bit_busy[17] = 7;
+	snapshot.status_bit_busy[31] = 8;
+
+	stream = tmpfile();
+	CHECK(stream != NULL);
+	if (!stream)
+		return;
+
+	CHECK(radeontop_capture_write_snapshot_evidence(stream,
+		"11111111-2222-4333-8444-555555555555", &masks, &snapshot) == 0);
+	CHECK(read_stream(stream, output, sizeof(output)));
+
+	// Ascending position order, zero positions omitted, and the highest bit
+	// counted rather than lost to a signed shift.
+	CHECK(strstr(output, "\"status_bits\":{\"17\":7,\"27\":8,\"31\":8}") != NULL);
+	CHECK(strstr(output, "\"18\":") == NULL);
+
+	// The union gauge still reports its own number, and the census contradicts
+	// the label rather than the count: rb2d reads 8 while bit 18 reads zero.
+	CHECK(strstr(output, "\"rb2d\":{\"busy\":8,\"valid\":8") != NULL);
 
 	fclose(stream);
 }
@@ -638,6 +686,7 @@ int main(int argc, char **argv) {
 
 	check_header();
 	check_snapshot_evidence();
+	check_status_bit_census();
 	check_run_end_records();
 	check_system_metadata();
 	check_exclusive_stream_lock();

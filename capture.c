@@ -536,6 +536,23 @@ int radeontop_capture_write_snapshot_evidence(FILE *stream,
 		first = false;
 	}
 
+	// The per-position census keys by bit index and omits positions that never
+	// asserted, so an idle window writes an empty object and a consumer reads
+	// an absent key as zero.  The denominator is signals.status.valid, the same
+	// one the lanes carry, because both count over the same valid reads.
+	if (fputs("},\"status_bits\":{", stream) == EOF)
+		return -1;
+
+	first = true;
+	for (int bit = 0; bit < COLLECTOR_STATUS_BIT_COUNT; bit++) {
+		if (!snapshot->status_bit_busy[bit])
+			continue;
+		if (fprintf(stream, "%s\"%d\":%llu", first ? "" : ",", bit,
+				(unsigned long long) snapshot->status_bit_busy[bit]) < 0)
+			return -1;
+		first = false;
+	}
+
 	return fputs("}}", stream) == EOF || ferror(stream) ? -1 : 0;
 }
 

@@ -918,6 +918,38 @@ static void case_rb2d_union(void) {
 	CHECK_U64(snapshot.lane_busy[COLLECTOR_LANE_RB2D], 4);
 	CHECK_CLOSE(collector_lane_fraction(&snapshot, COLLECTOR_LANE_RB2D), 1.0);
 
+	// The union lane reads busy in every slot and cannot say which of its two
+	// bits carried that.  The per-position census can, and this is the RS482
+	// reading: the gauge saturates while bit 18 never asserts.
+	CHECK_U64(snapshot.status_bit_busy[18], 0);
+	CHECK_U64(snapshot.status_bit_busy[27], 4);
+
+	harness_stop(&harness);
+	harness_destroy(&harness);
+}
+
+// A bit no lane maps still leaves a record, so an engine block the family
+// decode has not named cannot assert unnoticed.
+static void case_unmapped_status_bit(void) {
+	static const uint32_t values[] = { GUI_BIT | (1u << 21) };
+	struct harness harness;
+	struct collector_snapshot snapshot;
+
+	current_case = "unmapped_status_bit";
+	harness_init(&harness);
+	harness.masks.lane[COLLECTOR_LANE_GUI] = GUI_BIT;
+	harness.backend.status_values = values;
+	harness.backend.status_values_len = 1;
+
+	harness_start(&harness, 3, 1, COLLECTOR_CAP_STATUS);
+	CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_SNAPSHOT);
+
+	CHECK_U64(snapshot.lane_busy[COLLECTOR_LANE_GUI], 3);
+	CHECK_U64(snapshot.status_bit_busy[21], 3);
+	// The top position counts, so a signed shift cannot drop it.
+	CHECK_U64(snapshot.status_bit_busy[31], 3);
+	CHECK_U64(snapshot.status_bit_busy[0], 0);
+
 	harness_stop(&harness);
 	harness_destroy(&harness);
 }
@@ -2229,6 +2261,7 @@ int main(void) {
 	case_alternating_status();
 	case_failed_status_between_valid();
 	case_rb2d_union();
+	case_unmapped_status_bit();
 	case_absent_uvd();
 	case_failed_uvd();
 	case_failed_clock_no_stale_reuse();
