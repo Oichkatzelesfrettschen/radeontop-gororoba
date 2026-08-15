@@ -1930,12 +1930,99 @@ static void case_backend_latency_returns_to_grid(void) {
 		snapshot.nominal_slots);
 	CHECK(snapshot.max_read_latency_ns >= 250000000ULL);
 
+	// A read-bound window is the regime where the device owns the shortfall:
+	// four reads of a quarter second each fill the whole one-second window, so
+	// the read share reaches one while coverage sits at four slots in ten.  The
+	// mean over the slot period gives the same 2.5 the slot accounting gives,
+	// ten nominal over four attempted, which is the agreement a change that
+	// breaks the post-read deadline skip would separate.
+	CHECK_U64(snapshot.read_latency_samples, snapshot.attempted_slots);
+	CHECK_U64(collector_slot_period_ns(&harness.collector.config), 100000000ULL);
+	{
+		const double share =
+			collector_read_share(&snapshot, &harness.collector.config);
+		const double from_cost = snapshot.mean_read_latency_ns /
+			(double) collector_slot_period_ns(&harness.collector.config);
+		const double from_slots = (double) snapshot.nominal_slots /
+			(double) snapshot.attempted_slots;
+
+		CHECK(share >= 0.99 && share <= 1.01);
+		CHECK(from_cost >= 2.5 && from_cost < 2.6);
+		CHECK(from_cost - from_slots < 0.01 && from_slots - from_cost < 0.01);
+	}
+
 	pthread_mutex_lock(&harness.backend.mutex);
 	CHECK_U64(harness.backend.status_calls, snapshot.attempted_slots);
 	pthread_mutex_unlock(&harness.backend.mutex);
 
 	harness_stop(&harness);
 	harness_destroy(&harness);
+}
+
+// The derived figures alone, over the value ranges a run cannot reach: a rate
+// the schedule refuses, a window that timed no read, and the two regimes the
+// read share separates.
+static void case_slot_period_and_read_share_bounds(void) {
+	struct collector_config config;
+	struct collector_snapshot snapshot;
+
+	current_case = "slot_period_and_read_share_bounds";
+
+	memset(&snapshot, 0, sizeof(snapshot));
+	memset(&config, 0, sizeof(config));
+	config.dumpinterval = 1;
+
+	// The truncated quotient the schedule advances its grid by.
+	config.ticks = 120;
+	CHECK_U64(collector_slot_period_ns(&config), 8333333ULL);
+	config.ticks = COLLECTOR_TICKS_ARITHMETIC_MAX;
+	CHECK_U64(collector_slot_period_ns(&config), 1ULL);
+
+	// A rate the schedule cannot place has no period, and collector_init
+	// rejects the same two values.
+	config.ticks = 0;
+	CHECK_U64(collector_slot_period_ns(&config), 0ULL);
+	config.ticks = COLLECTOR_TICKS_ARITHMETIC_MAX + 1U;
+	CHECK_U64(collector_slot_period_ns(&config), 0ULL);
+
+	// The command line admits no rate above COLLECTOR_TICKS_MAX, which the
+	// schedule still places.
+	config.ticks = COLLECTOR_TICKS_MAX;
+	CHECK_U64(collector_slot_period_ns(&config), 1000ULL);
+
+	// A window that timed no read leaves the share undefined rather than zero,
+	// so a caller renders N/A rather than an idle device.
+	config.ticks = 120;
+	CHECK(isnan(collector_read_share(&snapshot, &config)));
+
+	// The schedule-bound regime the RS482 target sits in: a million reads of
+	// 2854 nanoseconds hold the device for under three percent of the second
+	// they were spread across, so the shortfall belongs to the wake-up path.
+	snapshot.read_latency_samples = 8596;
+	snapshot.mean_read_latency_ns = 2854.0;
+	{
+		const double share = collector_read_share(&snapshot, &config);
+
+		CHECK(share > 0.024 && share < 0.025);
+	}
+
+	// The device-bound regime: reads that fill the window leave the schedule
+	// nothing to place a sample in.
+	snapshot.read_latency_samples = 100;
+	snapshot.mean_read_latency_ns = 10000000.0;
+	{
+		const double share = collector_read_share(&snapshot, &config);
+
+		CHECK(share > 0.99 && share < 1.01);
+	}
+
+	// A longer window divides the same reads by more time.
+	config.dumpinterval = 4;
+	{
+		const double share = collector_read_share(&snapshot, &config);
+
+		CHECK(share > 0.24 && share < 0.26);
+	}
 }
 
 static void case_fatal_status_stops_the_slot(void) {
@@ -2274,6 +2361,7 @@ int main(void) {
 	case_sample_belongs_to_its_own_window();
 	case_stall_leaves_expired_windows_empty();
 	case_backend_latency_returns_to_grid();
+	case_slot_period_and_read_share_bounds();
 	case_fatal_status_stops_the_slot();
 	case_fatal_sclk_stops_before_mclk();
 	case_fatal_endpoint_finishes_the_collector();

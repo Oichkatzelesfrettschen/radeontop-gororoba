@@ -44,6 +44,8 @@ struct collector_accumulator {
 	uint64_t late_wakeups;
 	uint64_t max_lateness_ns;
 	uint64_t max_read_latency_ns;
+	double mean_read_latency_ns;
+	uint64_t read_latency_samples;
 
 	int fatal_read_result;
 };
@@ -291,8 +293,17 @@ done:
 	{
 		const int64_t latency = collector_timespec_delta_ns(&before, &after);
 
-		if (latency > 0 && (uint64_t) latency > accumulator->max_read_latency_ns)
-			accumulator->max_read_latency_ns = (uint64_t) latency;
+		if (latency > 0) {
+			if ((uint64_t) latency > accumulator->max_read_latency_ns)
+				accumulator->max_read_latency_ns = (uint64_t) latency;
+
+			// The same online form the clock means use, for the same
+			// reason: an integral sum over a high-rate window overflows.
+			accumulator->read_latency_samples++;
+			accumulator->mean_read_latency_ns +=
+				((double) latency - accumulator->mean_read_latency_ns) /
+				(double) accumulator->read_latency_samples;
+		}
 	}
 
 	return 0;
@@ -320,6 +331,8 @@ static enum collector_terminal_cause publish(struct collector *collector,
 	snapshot.late_wakeups = accumulator->late_wakeups;
 	snapshot.max_lateness_ns = accumulator->max_lateness_ns;
 	snapshot.max_read_latency_ns = accumulator->max_read_latency_ns;
+	snapshot.mean_read_latency_ns = accumulator->mean_read_latency_ns;
+	snapshot.read_latency_samples = accumulator->read_latency_samples;
 	snapshot.status = accumulator->status;
 	snapshot.uvd = accumulator->uvd;
 	snapshot.vce = accumulator->vce;
@@ -718,7 +731,7 @@ int collector_init(struct collector *collector,
 
 	if (!config->ticks || !config->dumpinterval)
 		return -1;
-	if (config->ticks > NS_PER_SEC)
+	if (config->ticks > COLLECTOR_TICKS_ARITHMETIC_MAX)
 		return -2;
 
 	// The slot count per window is the loop bound and the coverage
@@ -1030,4 +1043,27 @@ double collector_status_coverage(const struct collector_snapshot *snapshot) {
 		return NAN;
 
 	return (double) snapshot->status.valid / (double) snapshot->nominal_slots;
+}
+
+uint64_t collector_slot_period_ns(const struct collector_config *config) {
+	if (!config->ticks || config->ticks > COLLECTOR_TICKS_ARITHMETIC_MAX)
+		return 0;
+
+	// The truncated quotient the schedule advances by.  The remainder rides in
+	// the carry, so a slot is this wide or one nanosecond wider, and the
+	// difference is below the resolution any read cost is measured at.
+	return (uint64_t) (NS_PER_SEC / (int64_t) config->ticks);
+}
+
+double collector_read_share(const struct collector_snapshot *snapshot,
+		const struct collector_config *config) {
+	if (!config->dumpinterval || !snapshot->read_latency_samples)
+		return NAN;
+
+	// The reads that timed carry the mean, so the product covers the same reads
+	// rather than charging the mean to slots no read reached.  The window's
+	// nominal length divides it, which is the time the schedule had to spend.
+	return snapshot->mean_read_latency_ns *
+		(double) snapshot->read_latency_samples /
+		((double) config->dumpinterval * (double) NS_PER_SEC);
 }
