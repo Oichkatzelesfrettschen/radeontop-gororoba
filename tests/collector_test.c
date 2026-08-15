@@ -794,6 +794,58 @@ static void case_dither_seed_reproduces_offsets(void) {
 	}
 }
 
+// The default seed dithers and the zero seed does not, which is the whole of
+// the option's two-state contract.  Offsets drawn against the default land off
+// the grid point on at least one slot, and every offset against the zero seed
+// lands exactly on it, so a default that silently reverted to the exact grid
+// fails here rather than in a duty figure no field of the output explains.
+static void case_default_seed_dithers_and_zero_seed_does_not(void) {
+	static const uint32_t values[] = { GUI_BIT };
+	const int64_t period = NS_PER_SEC / 8;
+	struct harness harness;
+	struct collector_snapshot snapshot;
+
+	current_case = "default_seed_dithers_and_zero_seed_does_not";
+
+	CHECK(COLLECTOR_DITHER_SEED_DEFAULT != 0);
+	CHECK(COLLECTOR_DITHER_SEED_DEFAULT <= UINT64_C(4294967295));
+
+	for (int pass = 0; pass < 2; pass++) {
+		const uint64_t seed = pass == 0 ?
+			COLLECTOR_DITHER_SEED_DEFAULT : UINT64_C(0);
+		size_t off_grid = 0;
+
+		harness_init(&harness);
+		harness.masks.lane[COLLECTOR_LANE_GUI] = GUI_BIT;
+		harness.backend.status_values = values;
+		harness.backend.status_values_len = 1;
+		harness.backend.clock = &harness.clock;
+		harness.backend.record_times = true;
+
+		harness_start_seeded(&harness, 8, 1, COLLECTOR_CAP_STATUS, seed);
+		CHECK(next_snapshot(&harness, 0, &snapshot) == COLLECTOR_WAIT_SNAPSHOT);
+		CHECK(harness.backend.sample_time_count >= 8);
+
+		for (size_t slot = 0; slot < 8; slot++) {
+			const int64_t offset = sample_offset_in_slot(
+				&harness.backend.sample_times[slot], slot, period);
+
+			// The offset stays inside the slot whichever seed drew it.
+			CHECK(offset >= 0 && offset < period);
+			if (offset != 0)
+				off_grid++;
+		}
+
+		if (seed)
+			CHECK(off_grid > 0);
+		else
+			CHECK(off_grid == 0);
+
+		harness_stop(&harness);
+		harness_destroy(&harness);
+	}
+}
+
 // A slot is given up when its own sample point is already behind, not when its
 // grid point is.  With a read costing half a period and an offset drawn
 // uniformly from the whole period, the grid-point rule gives up a slot whenever
@@ -2396,6 +2448,7 @@ int main(void) {
 	case_dither_keeps_samples_in_their_slots();
 	case_unseeded_schedule_stays_exact();
 	case_dither_seed_reproduces_offsets();
+	case_default_seed_dithers_and_zero_seed_does_not();
 	case_dither_skips_only_passed_sample_points();
 	case_dither_rewaits_after_skipped_slot();
 

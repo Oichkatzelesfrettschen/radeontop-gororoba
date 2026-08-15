@@ -101,13 +101,15 @@ static void help(const char * const me, const unsigned int ticks,
 		"-p --path device	Open DRM device node by path\n"
 		"-t --ticks 50		Samples per second (default %u)\n"
 		"-T --transparency	Enable transparency\n"
-		"   --dither-seed 7	Offset each sample inside its own slot, seeded by N,\n"
+		"   --dither-seed N	Offset each sample inside its own slot, seeded by N,\n"
 		"			so a workload periodic at a harmonic of the sample\n"
-		"			rate meets a moving phase.  Omit for the exact grid.\n"
+		"			rate meets a moving phase (default %llu).  Zero\n"
+		"			selects the exact grid.\n"
 		"\n"
 		"-h --help		Show usage help\n"
 		"-v --version		Show the version\n"),
-		me, dumpinterval, ticks);
+		me, dumpinterval, ticks,
+		(unsigned long long) COLLECTOR_DITHER_SEED_DEFAULT);
 	exit(status);
 }
 
@@ -134,9 +136,8 @@ int main(int argc, char **argv) {
 	char *dump = NULL;
 	unsigned int dumpinterval = default_dumpinterval;
 	const char *path = NULL;
-	// Zero keeps every sample on its exact grid point, which is the default and
-	// what makes two runs of one workload directly comparable.
-	uint64_t dither_seed = 0;
+	// collector.h owns the default seed and the measurement that puts it there.
+	uint64_t dither_seed = COLLECTOR_DITHER_SEED_DEFAULT;
 	struct radeon_device_identity identity;
 
 	// Translations
@@ -228,10 +229,10 @@ int main(int argc, char **argv) {
 				path = optarg;
 			break;
 			case OPT_DITHER_SEED:
-				// Zero is the off state and the flag's absence is how to
-				// select it, so an explicit zero is a rejected value
-				// rather than a second spelling of the default.
-				dither_seed = parse_count(optarg, _("dither seed"), 1, UINT_MAX, 10);
+				// Zero selects the exact grid, matching the sentinel the
+				// collector reads, so the option spells both states and
+				// the absent flag means the measured default.
+				dither_seed = parse_count(optarg, _("dither seed"), 0, UINT_MAX, 10);
 			break;
 		}
 	}

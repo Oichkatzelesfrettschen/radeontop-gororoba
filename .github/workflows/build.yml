@@ -230,7 +230,9 @@ jobs:
             test ! -s /tmp/err || fail "$opt wrote to stderr"
           done
 
-          for seed in 1 4294967295; do
+          # Zero is the exact-grid selector rather than a rejected value, so it
+          # belongs with the accepted seeds at both ends of the range.
+          for seed in 0 1 4294967295; do
             ./radeontop --dither-seed "$seed" --help > /tmp/out 2> /tmp/err || \
               fail "valid dither seed $seed was rejected"
             test ! -s /tmp/err || fail "valid dither seed $seed wrote to stderr"
@@ -259,7 +261,7 @@ jobs:
           # A rejected argument exits nonzero and names the accepted range.
           for arg in "-t 0" "-t -1" "-t abc" "-t 1000001" \
             "-i 0" "-i 86401" "-b zz" "-b 100" "-b -1" \
-            "--dither-seed 0" "--dither-seed abc" \
+            "--dither-seed abc" "--dither-seed -1" \
             "--dither-seed 4294967296"; do
             # shellcheck disable=SC2086
             if ./radeontop $arg -l 1 -d - > /tmp/out 2> /tmp/err; then
