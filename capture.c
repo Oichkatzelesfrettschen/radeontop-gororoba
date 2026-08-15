@@ -475,10 +475,13 @@ int radeontop_capture_write_snapshot_evidence(FILE *stream,
 		fputs(",\"published_realtime\":", stream) == EOF ||
 		write_timespec(stream, &snapshot->published_realtime) ||
 		fprintf(stream,
-			"},\"timing\":{\"late_wakeups\":%llu,\"max_lateness_ns\":%llu,\"max_read_latency_ns\":%llu},\"signals\":{",
+			"},\"timing\":{\"late_wakeups\":%llu,\"max_lateness_ns\":%llu,\"max_read_latency_ns\":%llu,"
+			"\"mean_read_latency_ns\":%llu,\"read_latency_samples\":%llu},\"signals\":{",
 			(unsigned long long) snapshot->late_wakeups,
 			(unsigned long long) snapshot->max_lateness_ns,
-			(unsigned long long) snapshot->max_read_latency_ns) < 0)
+			(unsigned long long) snapshot->max_read_latency_ns,
+			(unsigned long long) snapshot->mean_read_latency_ns,
+			(unsigned long long) snapshot->read_latency_samples) < 0)
 		return -1;
 
 	if (write_signal(stream, "status", COLLECTOR_CAP_STATUS, snapshot,

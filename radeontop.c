@@ -191,7 +191,11 @@ int main(int argc, char **argv) {
 				help(argv[0], default_ticks, default_dumpinterval, 1);
 			break;
 			case 't':
-				ticks = parse_count(optarg, _("tick count"), 1, 1000000, 10);
+				// collector.h owns the ceiling and the reason it sits
+				// where it does; parse_count enforces it here so a
+				// rejected rate is named before the collector exists.
+				ticks = parse_count(optarg, _("tick count"), 1,
+					COLLECTOR_TICKS_MAX, 10);
 			break;
 			case 'T':
 				transparency = 1;

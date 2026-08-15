@@ -46,6 +46,15 @@ restate one asks for a narrower contract or evidence class.
   rather than relying on the indirect-call structure to force one.
   `_Static_assert` proves each offset plus its access width lands inside the
   mapping it reads.
+- Each window carries the mean read cost beside the maximum, over its own
+  denominator, and `collector_read_share` turns the mean into the fraction of
+  the window the device reads occupied. `collector_lane_fraction` divides by the
+  reads that validated, so the duty figure stays truthful at whatever rate the
+  sampler reaches and `cov` carries the shortfall; the share attributes it.
+  A tail read moves the maximum by two orders and leaves the mean where it was,
+  so the two answer different questions and both are published. Admission keeps
+  its fixed ceiling, because what binds the rate belongs to the host and the boot
+  rather than to the part.
 - `--dither-seed N` offsets each sample inside its own slot, so a workload
   periodic at a harmonic of the sampling rate meets a moving phase. Each bound
   uses the exact carried slot width, and rejection sampling removes modulo bias.
@@ -233,6 +242,70 @@ load with `--run-forever` and proves it alive on both sides of every device
 pass. A load pass that does not record the load's liveness cannot distinguish an
 idle device from a missing load.
 
+### Schedule against a raw reference
+
+A tight loop over the same `resource2` mapping reads `RBBM_STATUS` about 520000
+times per second, so it integrates the busy fraction rather than sampling it and
+serves as an oracle for the 120 Hz scheduled sampler. Both count `GUI_ACTIVE`
+(31) set over the reads that validated, so the comparison is a ratio of integers
+on each side. A duty-cycled 2D fill puts the true duty near a third, because a
+saturating load makes the two instruments agree whatever the schedule does. Two
+raw phases bracket each block, so the load's own movement is measured rather than
+assumed, and phases never overlap because two mappers at once is uncalibrated.
+
+- Idle anchors both instruments at the same zero: 2 set reads in 32013700 raw
+  reads, 0 in 7156 scheduled samples. The two count the same bit over the same
+  kind of denominator.
+- Under a 59.87 millisecond cycle, 7.18 sample slots wide, the raw brackets read
+  0.31241 and 0.30855 and the scheduled sampler reads 0.31389 on the exact grid
+  and 0.31471 dithered. Both sit inside the envelope their own sample count and
+  the measured load drift allow, at about a fifth of it.
+- `attempted + missed == nominal` holds in every window of every phase. Coverage
+  is 100 percent on the exact grid and no worse than 95.83 percent dithered,
+  which is the coverage dithering costs rather than a defect.
+
+The per-window scatter raises a second question the pooled figure hides, and this
+run does not settle it. Against the binomial deviation each window's own sample
+count implies, the exact grid runs at 0.25 of it under the 7.18-slot cycle and
+4.37 times it under a 8.29 millisecond cycle, 0.99 slots wide, where per-window
+duty swings between 0.008 and 0.717; dithering reads 0.47 and 1.15 on the same
+two loads. The hypothesis those numbers suggest is that an exact grid samples a
+cycle it oversamples more evenly than a random sampler would and meets one part
+of a cycle it samples once.
+
+That bracketed run does not establish it, because its exact and dithered phases
+ran one after the other inside brackets whose load moved 0.073, so the two grids
+did not meet one load. A second run of fourteen phases separates them: one
+unbroken load session holding a period of 8.280 milliseconds with a
+cycle-to-cycle deviation of 0.277 across 10696 cycles at a client duty of 0.4628,
+which is 0.99 slots per cycle as a measured condition rather than a nominal one,
+with the grids alternating in six-second slices and the leading grid alternating
+between pairs, so a drifting load reaches both in the same proportion and a
+monotone drift favors neither.
+
+Every one of the six exact slices scatters more than every one of the six
+dithered slices. The exact ratios run 2.03, 2.38, 2.80, 3.82, 4.42, and 4.87
+against dithered ratios of 0.75, 1.03, 1.25, 1.27, 1.28, and 1.69, medians 3.31
+and 1.26. The runner predeclares the direction, so the one-sided probability of
+complete separation that way is one ordering in the 924 the two samples admit,
+and the grid accounts for the contrast at p = 0.0011 under the null that it does
+not. The session's own load moved 0.00611 between its opening and closing census
+slices.
+
+An exact grid therefore samples a cycle it oversamples more evenly than a random
+sampler would, and meets a preferred part of a cycle it samples about once, where
+the pooled figure still converges while any single window misreports. Whether
+that earns dithering a default is a display decision this measurement informs
+rather than settles: dithering costs coverage, 95.83 percent against 100, and the
+exact grid is the better sampler on the load that spans 7.18 slots.
+
+Neither load tests a sustained phase lock. A lock needs the load period tracked
+to a quarter cycle across the window, 575 nanoseconds per cycle at this rate,
+and a `nanosleep`-timed client delivers a cycle-to-cycle deviation of 255883,
+which is coarser by a factor of 445. A lock test takes a period derived from
+hardware, such as a display-synchronized client whose 60 Hz frame sits at exactly
+two sample slots.
+
 ## Ready without target hardware
 
 ### Collector dither phase inclusion
@@ -343,6 +416,17 @@ ordinary scheduling, then use a controlled real-time policy with the same load
 and rate. A tail that survives both supports device latency; a tail that shrinks
 supports preemption. The run retains full distributions rather than maxima
 alone.
+
+The published mean narrows what the tail can be. An idle sweep over 120, 1000,
+4000, 8000, 200000, 400000, and 1000000 samples per second holds the mean read
+cost between 2639 and 3177 nanoseconds at every rate while single maxima reach
+523 and 858 microseconds, so the tail is a rare excursion rather than a shift in
+the cost of a read, and it does not scale with the requested rate. The same
+sweep bounds the wake-up path from the other side: at 1000000 samples per second
+the worker completes 8596 iterations in the window, roughly 112 microseconds
+each against a mean read of 2854, so the schedule reaches the slot period first
+at every rate the command line admits. A discriminator run separates preemption
+from device latency inside that 112 microseconds.
 
 ### RS482 2D lane discriminator
 

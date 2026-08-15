@@ -150,7 +150,7 @@ static int dump_line(FILE *f, const struct engine_masks *masks,
 	// line.  Read failures can correlate with load, so a duty figure without
 	// its denominator and its missed-slot count cannot be interpreted after
 	// the fact.
-	fprintf(f, ", gen %llu, cov %s, missed %llu, late %llu, maxlate %lluus, maxread %lluus, lag %lldus",
+	fprintf(f, ", gen %llu, cov %s, missed %llu, late %llu, maxlate %lluus, maxread %lluus, meanread %lluns, lag %lldus",
 		(unsigned long long) snapshot->generation,
 		format_percent(buffer, sizeof(buffer),
 			collector_status_coverage(snapshot)),
@@ -158,8 +158,17 @@ static int dump_line(FILE *f, const struct engine_masks *masks,
 		(unsigned long long) snapshot->late_wakeups,
 		(unsigned long long) (snapshot->max_lateness_ns / 1000),
 		(unsigned long long) (snapshot->max_read_latency_ns / 1000),
+		(unsigned long long) snapshot->mean_read_latency_ns,
 		(long long) (collector_timespec_delta_ns(&snapshot->window_end,
 			&snapshot->published) / 1000));
+
+	// Coverage states how far the window fell short of its nominal slots, and
+	// the read share states how much of the shortfall the device can account
+	// for.  A small share beside a low coverage puts the cause on the wake-up
+	// path rather than on the register read.
+	fprintf(f, ", readshare %s",
+		format_percent(buffer, sizeof(buffer),
+			collector_read_share(snapshot, &metadata->config)));
 
 	// Every enabled measurement class serializes its own denominator, so a
 	// per-lane figure can be interpreted without assuming status health
