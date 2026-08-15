@@ -9,6 +9,10 @@ path is spelled in that exact case: imports resolve literally, and this
 filesystem is case-sensitive. This file carries Claude Code operating notes
 only; shared doctrine lands in `AGENTS.md`.
 
+Each section below names the `AGENTS.md` section it defers to, so a rule has one
+home and this file adds only what is specific to Claude Code. A rule that would
+apply to any agent belongs in `AGENTS.md` instead.
+
 When Claude Code starts inside a parent workspace or a temporary worktree, load
 `radeontop-gororoba/AGENTS.md` before editing radeontop paths. These rules govern
 every edit under this repository regardless of launch directory.
@@ -30,9 +34,16 @@ under `Tooling for investigation and audits`.
 
 ## Response shape
 
-Responses report results, decisions, evidence, and remaining uncertainty in
-mechanism-first form: changed mechanism, evidence used, validation run, tests not
-run and why, risks or unresolved falsifiers. Chained reasoning appears when it
-explains the next action or a validation requirement; the rest of the
-deliberation lives in thoughtspace. Responses are plain ASCII mechanism prose
-under durable names.
+`AGENTS.md` owns how a response reads, under `Response and report prose`, and
+that section governs every response about this repository: the answer first,
+one new fact per sentence, plain verbs over nominalizations, quantities at the
+precision the argument uses, and scarce emphasis. The mandatory content lives
+there too -- outcome, decision, evidence, validation run, an unrun check as
+`not run` with its reason, and residual uncertainty.
+
+Claude Code renders a response as GitHub-flavored Markdown in a terminal, so
+headings, tables, and bold render live, and the scarcity rule applies to what
+they mark on a screen the reader scrolls once.
+
+Deliberation lives in thinking blocks. Chained reasoning reaches the response
+only where it explains the next action or a validation requirement.
