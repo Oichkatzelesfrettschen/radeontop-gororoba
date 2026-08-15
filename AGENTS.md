@@ -152,7 +152,9 @@ the nearest principle.
   placeholder, dead code, or `TODO: finish later` prose absent explicit tracked
   rationale.
 - Reports state results and decisions directly: the outcome, the decision, the
-  evidence, and the residual uncertainty.
+  evidence, the validation that ran, and the residual uncertainty. A response
+  addressed to a person is plain English ordered by importance, under
+  `Response and report prose`.
 - A defect in privileged register or BAR access stops normal feature work;
   contain and report it, then resume.
 
@@ -425,6 +427,74 @@ Markdown loaded by agents uses exactly one H1, heading depth no deeper than
 direct positive-declarative statements. Rule files carry plain ASCII,
 present-tense declarative text. Tables appear only when columns carry
 independent comparison value.
+
+## Response and report prose
+
+A response addressed to a person is a different genre from a commit body, and
+the rules for durable artifacts do not carry over to it. A commit body is read
+by a reviewer with the diff open, so it is dense, self-contained, and
+greppable. A response is read once, at speed, by someone who wants to know what
+happened. Compressing a response the way a commit body compresses yields text
+that carries every fact and communicates none of them. The sections below
+govern responses; `Comments, commits, and Markdown` governs the artifacts.
+
+### The answer comes first
+
+The opening sentence gives the outcome in plain words: what was asked, and what
+happened. Method, evidence, and caveats follow. A reader who stops after two
+sentences still has the result.
+
+### One new thing per sentence
+
+A sentence opens on something the reader already holds and closes on one new
+fact. A sentence whose subject, object, and modifier are all new leaves three
+unresolved referents in the air, and a paragraph of those reads as noise.
+Ordinary connectives -- because, so, but, which means -- state the relation
+between sentences, where a semicolon only implies it.
+
+### Plain words over nominalizations
+
+Name who does what to what. `A census showed those bits never turn on, so the
+three lanes stay masked` states the mechanism; `the masking of the lanes rests
+on a polling census` turns two processes into nouns and leaves the reader to
+reconstruct the agency. Verbs stay verbs.
+
+### Repetition serves a reader
+
+A response names a thing the same way every time and restates the fact the
+argument turns on. The rule against repetition governs code, comments, and
+durable documents, where a second copy of a fact is a second thing to maintain.
+Prose read once needs the reader to consolidate, and a placed restatement is
+how that happens.
+
+### Numbers appear as quantities
+
+A figure in prose carries the precision the argument uses: `about 96 million
+reads`, `roughly a fifth of the envelope`. Full-precision values, hashes, and
+object ids belong in the commit body, the finding, and the artifact, where they
+are grepped and checked. Eight significant figures in a sentence cite authority
+rather than state a quantity.
+
+### Emphasis stays scarce
+
+Bold marks the few sentences a reader must not miss; applied to every clause it
+marks nothing. Tables appear when columns carry independent comparison value,
+matching the Markdown rule.
+
+### Process narration earns its place
+
+The report states what the work produced. A correction, a retraction, or a
+refuted assumption enters when it changes what the reader should now believe or
+do, and a finding that came out of a mistake is reported as the finding. The
+sequence of attempts that reached the result stays in the commit body and the
+falsification record.
+
+### Directness costs no content
+
+The response still carries the outcome, the decision, the evidence, the
+validation that ran, an unrun check as `not run` with its reason, and the
+residual uncertainty. Plain ordering makes those easier to find rather than
+optional.
 
 ## Evidence boundary
 
