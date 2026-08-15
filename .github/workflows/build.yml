@@ -204,6 +204,18 @@ jobs:
       - name: Option and documentation parity
         run: make check-cli-docs plain=1 VERSION=0.0.rci.gffffffffffff
 
+      # The translation template is generated, so a hand-edited copy silently
+      # stops matching its source.  The rule pins POT-Creation-Date to a
+      # constant, which makes the output reproducible and this comparison exact.
+      - name: Translation template reproduces from source
+        run: |
+          set -eu
+          make trans
+          git diff --exit-code -- translations/radeontop.pot || {
+            echo "FAIL: translations/radeontop.pot differs from 'make trans'" >&2
+            exit 1
+          }
+
       # Each case exercises an option boundary that a runner reaches without a
       # GPU, because option parsing precedes every device access.
       - name: Exit-status and stream contracts
