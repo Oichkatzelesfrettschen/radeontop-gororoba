@@ -311,72 +311,73 @@ msgid ""
 "-p --path device\tOpen DRM device node by path\n"
 "-t --ticks 50\t\tSamples per second (default %u)\n"
 "-T --transparency\tEnable transparency\n"
-"   --dither-seed 7\tOffset each sample inside its own slot, seeded by N,\n"
+"   --dither-seed N\tOffset each sample inside its own slot, seeded by N,\n"
 "\t\t\tso a workload periodic at a harmonic of the sample\n"
-"\t\t\trate meets a moving phase.  Omit for the exact grid.\n"
+"\t\t\trate meets a moving phase (default %llu).  Zero\n"
+"\t\t\tselects the exact grid.\n"
 "\n"
 "-h --help\t\tShow usage help\n"
 "-v --version\t\tShow the version\n"
 msgstr ""
 
-#: radeontop.c:123
+#: radeontop.c:125
 msgid "Failed to drop effective privileges"
 msgstr ""
 
-#: radeontop.c:197
+#: radeontop.c:198
 msgid "tick count"
 msgstr ""
 
-#: radeontop.c:212
+#: radeontop.c:213
 msgid "bus number"
 msgstr ""
 
-#: radeontop.c:219
+#: radeontop.c:220
 msgid "dump limit"
 msgstr ""
 
-#: radeontop.c:225
+#: radeontop.c:226
 msgid "dump interval"
 msgstr ""
 
-#: radeontop.c:234
+#: radeontop.c:235
 msgid "dither seed"
 msgstr ""
 
-#: radeontop.c:240
+#: radeontop.c:241
 #, c-format
 msgid "Unexpected operand '%s'\n"
 msgstr ""
 
-#: radeontop.c:253
+#: radeontop.c:254
 msgid "Failed to select the capture numeric locale"
 msgstr ""
 
-#: radeontop.c:265
+#: radeontop.c:266
 msgid "Failed to drop privileges"
 msgstr ""
 
-#: radeontop.c:269
+#: radeontop.c:270
 msgid "Unsupported Radeon PCI ID: no validated family model"
 msgstr ""
 
-#: radeontop.c:281
+#: radeontop.c:282
 msgid "Failed to initialize the collector clock"
 msgstr ""
 
-#: radeontop.c:306
+#: radeontop.c:307
 msgid "Failed to initialize capture provenance"
 msgstr ""
 
-#: radeontop.c:311
+#: radeontop.c:312
 msgid "Failed to initialize the collector"
 msgstr ""
 
-#: radeontop.c:316
+#: radeontop.c:317
 msgid "Failed to start the collector thread"
 msgstr ""
 
-#: radeontop.c:330
+#: radeontop.c:331
 msgid "Failed to join the collector thread.\n"
 msgstr ""
 

@@ -150,12 +150,33 @@ struct collector_config {
 
 	// A nonzero seed offsets each sample within its own slot, so a workload
 	// periodic at a harmonic of the sampling rate meets a moving phase rather
-	// than the same one every period.  Zero keeps the exact grid, which is the
-	// default and reproduces a run exactly.  The offset stays inside the slot
-	// it belongs to, so slot boundaries, window boundaries, and the
-	// attempted-plus-missed identity hold whether or not dithering is on.
+	// than the same one every period.  Zero keeps the exact grid.  The offset
+	// stays inside the slot it belongs to, so slot boundaries, window
+	// boundaries, and the attempted-plus-missed identity hold whether or not
+	// dithering is on.
 	uint64_t dither_seed;
 };
+
+// The seed the command line supplies when the option stays out.  Dithering
+// carries the default because the exact grid fails on the workload a desktop
+// most often runs: a period near one sample slot, where the grid meets the same
+// phase of every cycle and reports that phase as the whole duty.  Measured on
+// RS482 against a load of 8.280 ms, about one slot at the default 120 ticks,
+// the exact grid scatters 3.31 times its own binomial expectation and single
+// windows range from 0.008 to 0.717 around a true duty of 0.4628, while the
+// dithered grid holds 1.26.  Against a 59.87 ms load, about seven slots, the
+// exact grid is the better sampler at 0.25 against 0.47, so the exact grid wins
+// where it oversamples and loses where it aliases.  Dithering gives up a slot
+// when scheduler lateness carries its offset past the slot end, which cost up
+// to four percent of nominal slots under load and stayed inside three percent
+// at idle, against an exact grid that retains every slot.  Every window reports
+// that as coverage, so the trade spends a figure the output carries for a bias
+// no field of it would show.
+//
+// splitmix64 finalizes its additive counter, so a small seed is as good as a
+// large one; 7919 is the seed the validating run on RS482 used, which makes the
+// shipped default the configuration that carries the measurement.
+#define COLLECTOR_DITHER_SEED_DEFAULT UINT64_C(7919)
 
 // Draws one unbiased value in [0, bound) from the collector's deterministic
 // splitmix64 stream.  Rejection removes the modulo bias that appears whenever
