@@ -382,6 +382,56 @@ __attribute__((noreturn)) void die(const char *why) {
 }
 
 #ifndef TEST_DRM_BUS_DISCOVERY
+// Every RS480 mask pinned to the rs400d.h S_000E40_* position it decodes, and
+// every masked lane pinned to zero.  A gauge reads the bit its mask selects, so
+// a mask that moves silently renames a lane's block and reports one engine's
+// activity under another's label; a masked lane that gains a bit renders a
+// number the exposure evidence does not support.  Comment and structure edits
+// in initbits pass through this check rather than through a reader.
+static void check_rs480_masks(void) {
+	initbits(RS480);
+
+	CHECK(bits.gui == (1U << 31));   // GUI_ACTIVE
+	CHECK(bits.cf == (1U << 14));    // CF_PIPE_BUSY
+	CHECK(bits.ee == (1U << 15));    // ENG_EV_BUSY
+	CHECK(bits.cp == (1U << 16));    // CP_CMDSTRM_BUSY
+	CHECK(bits.e2 == (1U << 17));    // E2_BUSY
+	CHECK(bits.vgt == (1U << 20));   // VAP_BUSY
+	CHECK(bits.pa == (1U << 26));    // GA_BUSY
+
+	// RB2D_BUSY(18) stays in the union because the decode names the field;
+	// CBA2D_BUSY(27) is what asserts on RS482.
+	CHECK(bits.rb2d == ((1U << 18) | (1U << 27)));
+
+	// RB3D_BUSY(19), RE_BUSY(21), and TAM_BUSY(22) back these three lanes and
+	// stay clear under loads driving their blocks, so the lanes stay masked.
+	CHECK(bits.cb == 0);
+	CHECK(bits.sc == 0);
+	CHECK(bits.ta == 0);
+
+	// No RS400 field reports these blocks, so no bit can carry their lanes.
+	CHECK(bits.db == 0);
+	CHECK(bits.tc == 0);
+	CHECK(bits.sx == 0);
+	CHECK(bits.sh == 0);
+	CHECK(bits.spi == 0);
+	CHECK(bits.smx == 0);
+	CHECK(bits.cr == 0);
+	CHECK(bits.uvd == 0);
+	CHECK(bits.vce0 == 0);
+
+	// The R600 layout shares only GUI_ACTIVE with the R300 one, so a family
+	// that reaches the R600 branch proves the RS480 masks stayed inside it.
+	initbits(BONAIRE);
+	CHECK(bits.gui == (1U << 31));
+	CHECK(bits.cp == 0);
+	CHECK(bits.e2 == 0);
+	CHECK(bits.rb2d == 0);
+	CHECK(bits.cf == 0);
+	CHECK(bits.cb == (1U << 30));
+	CHECK(bits.pa == (1U << 25));
+}
+
 int main(void) {
 	struct radeon_device_identity identity;
 	short bus = -1;
@@ -469,6 +519,8 @@ int main(void) {
 	CHECK(resource_open_count == 2);
 	CHECK(privilege_raise_count == 2);
 	CHECK(privilege_drop_count == 2);
+
+	check_rs480_masks();
 
 	printf("detect path: %u checks, %u failed\n", checks, failures);
 	return failures ? 1 : 0;
