@@ -667,7 +667,8 @@ void initbits(int fam) {
 	if (fam == RS480) {
 		// R300-class RBBM_STATUS (0x0E40) engine-busy layout, shared by
 		// RS400/RS480/RS482/RS485.  Every assigned bit position is the
-		// kernel's own decode (r300d.h S_000E40_* field macros).  Map the
+		// kernel's own decode (rs400d.h S_000E40_* field macros, the
+		// RS400-family header covering exactly this case).  Map the
 		// R300 blocks onto radeontop's gauges and give the blocks with no
 		// R600 analogue (the PM4 command stream and the 2D engine pair)
 		// their own lanes; bits with no R300 analogue stay zero.
@@ -677,30 +678,51 @@ void initbits(int fam) {
 		bits.ee  = (1U << 15);  // ENG_EV_BUSY -- the event engine proper
 		bits.cp  = (1U << 16);  // CP_CMDSTRM_BUSY -- PM4 command stream executing
 		bits.e2  = (1U << 17);  // E2_BUSY -- the 2D draw engine
-		// CBA2D carries this union on RS482: a raw RBBM_STATUS census under
-		// EXA solid fill and window copy asserts bit 27 in every sample and
-		// bit 18 in none, so the gauge reports the 2D cache and blit
-		// arbitrator rather than the render backend under those two operation
-		// classes.
+		// CBA2D_BUSY carries this union on RS482.  A polling census of the
+		// whole register bounds RB2D_BUSY(18) below 3e-08 over the reads taken
+		// while the 2D engine was busy and sees it set in none of them, so the
+		// gauge reports the 2D cache and blit arbitrator alone.  E2_BUSY and
+		// CBA2D_BUSY each assert with the other clear under solid fill, so the
+		// three 2D fields carry no co-assertion rule that would place bit 18
+		// with its neighbors.  The union keeps bit 18 because the decode names
+		// it: an RS400-class part that drives it reports through this gauge.
 		bits.rb2d = (1U << 18) | (1U << 27);  // RB2D|CBA2D -- 2D render backend
 		bits.cf  = (1U << 14);  // CF_PIPE_BUSY -- the command/clause fetch pipe
-		// A retained RS482 matrix observes GUI, GA, CP_CMDSTRM, ENG_EV,
-		// CF_PIPE, and VAP assertions under 3D loads on a modesetting plus
-		// glamor stack, where E2_BUSY and the RB2D_BUSY|CBA2D_BUSY union stay
-		// clear because glamor runs 2D as OpenGL on the 3D pipe and reaches no
-		// legacy 2D callback.  Under the xf86-video-ati EXA solid and copy
-		// callbacks both 2D gauges assert above 0.99, so the fields are exposed
-		// and the glamor zero bounds that software route.  GA_BUSY and VAP_BUSY
-		// stay clear across the same 2D runs, because the blitter path skips
-		// geometry assembly and the vertex front end, so a pa gauge at zero
-		// beside a saturated gui gauge is those fields reporting an idle block
-		// rather than a broken lane.
-		// The same records do not observe RB3D, RE, TAM, TDM, PB, or TIM.
-		// Those lanes stay masked because a permanent zero would overstate the
-		// bounded non-observation.  Active reads in the GA and ZB 0x4xxx blocks
-		// remain probe-only: an RS482 read of 0x42d0 under GUI activity
-		// deep-wedged the host.
-		bits.sc = bits.ta = bits.cb = bits.db = 0;
+		// Each 2D and 3D group follows its own workload rather than a global
+		// activity signal.  The xf86-video-ati EXA solid and copy callbacks
+		// drive E2_BUSY and the union above 0.99 while GA_BUSY and VAP_BUSY
+		// stay near zero, because the blitter path skips geometry assembly and
+		// the vertex front end; a hardware GL fill load inverts the same
+		// register, holding GA_BUSY at 0.9963 while both 2D fields read
+		// exactly zero.  A pa gauge at zero beside a saturated gui gauge is
+		// therefore a field reporting an idle block rather than a broken lane.
+		// A screen-covering quad costs four vertices, so that fill load leaves
+		// VAP_BUSY near zero and a geometry-bound load is what exposes it: the
+		// two together drive the vertex and the fragment path, which neither
+		// does alone, and between them every gauge above answers a load.
+		// A server started with the 2D acceleration hooks unbound runs the same
+		// request series and drives CF_PIPE_BUSY, ENG_EV_BUSY, CP_CMDSTRM_BUSY,
+		// E2_BUSY, CBA2D_BUSY, and GUI_ACTIVE from about 0.99 to zero, which
+		// places the readings on the workload rather than on a stuck aperture.
+		// Glamor implements 2D as OpenGL on the 3D pipe and reaches no legacy
+		// 2D callback, so the e2 and rb2d gauges read zero on a modesetting
+		// plus glamor stack whatever the engine is doing; that zero bounds the
+		// software route, and the EXA assertions bound the field.
+		// RB3D_BUSY(19), RE_BUSY(21), TAM_BUSY(22), TDM_BUSY(23), PB_BUSY(24),
+		// and TIM_BUSY(25) stay clear through every phase of that census,
+		// including the fill load that saturates the fragment path the render
+		// backend and the texture units serve.  Three of the six back a gauge
+		// here -- RB3D_BUSY the color lane, RE_BUSY the scan converter, TAM_BUSY
+		// the texture addresser -- and those three stay masked on that result,
+		// because a gauge pinned to zero renders a number the part does not
+		// produce.  An assertion of one of them under a load driving its block
+		// exposes the field and restores its lane.  Active reads in the GA and
+		// ZB 0x4xxx blocks remain probe-only: an RS482 read of 0x42d0 under GUI
+		// activity deep-wedged the host.
+		bits.cb = bits.sc = bits.ta = 0;
+		// RB3D_BUSY reports the 3D render backend whole, so no RS400 field
+		// separates depth from color and the depth lane has none to carry it.
+		bits.db = 0;
 		bits.tc = bits.sx = bits.sh = bits.spi = bits.smx = bits.cr = 0;
 		bits.uvd = 0;   // RS482 has no UVD -- the 3D pipe is the only decoder
 		bits.vce0 = 0;  // no VCE
