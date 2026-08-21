@@ -66,12 +66,13 @@ restate one asks for a narrower contract or evidence class.
   across the windows of one capture and reports Pearson's dispersion with the
   degrees of freedom the run supplies, and the effective sample size follows from
   the interval's upper limit so a reading below one never narrows anything.
-  Excess scatter bounds the sampler's contribution rather than isolating it; a
-  reading below one attributes itself to the grid, because load change and
-  correlated read loss both add variance and neither removes it. The statistic
-  equals the square of the scatter ratio the target reports already carry, which
-  was verified independently on `dither-seed-grid.dump` at 1.1756 and 1.3821. The
-  analyzer touches no sample path, so package identity is unchanged.
+  Excess scatter bounds the sampler's contribution rather than isolating it. A
+  reading below one rules out load change and correlated read loss, which both
+  add variance, and leaves a commensurate grid phase set and a load whose busy
+  fraction varies across slots unseparated until a dithered pass runs. The
+  statistic equals the square of the scatter ratio the target reports already
+  carry, verified independently on `dither-seed-grid.dump` at 1.1756 and 1.3821.
+  The analyzer touches no sample path, so package identity is unchanged.
 - Seven unit binaries cover capture serialization, collector scheduling and
   failure semantics, device admission and clock conversion, and strict RS480
   observation parsing. A Python standard-library gate parses complete header,
@@ -477,8 +478,7 @@ from device latency inside that 112 microseconds.
 
 ### Window-dispersion contrast between the two grids
 
-The retained captures read the sub-binomial regime once, at `D = 0.228` on the
-vertex-build load, and never read the aliased regime, because no retained capture
+The retained captures never read the aliased regime, because no retained capture
 pairs a load periodic at about one sample slot with both grids. Repeat the
 fourteen-phase design that produced the 3.31 and 1.26 scatter ratios, holding one
 unbroken load session at a period near one sample slot, alternating exact and
@@ -488,6 +488,19 @@ near 1.6 for the dithered one, which are those ratios squared, and each slice's
 interval must exclude the other grid's point estimate. A pair that agrees within
 its intervals refutes the claim that the grid's phase geometry drives the
 contrast.
+
+### Sub-binomial attribution on the vertex-build load
+
+The vertex-build capture reads `D = 0.228` on four lanes over 60 windows on the
+exact grid, and no dithered pass covers that workload. A grid meeting a
+commensurate phase set and a load dividing its busy time across slots in a
+repeating pattern both produce that reading, and the second survives a dither
+because the offset moves a sample inside its own slot and leaves the slot's own
+busy fraction where it was. Point `dither.sh` at the vertex-build workload with
+the same 60-window length: a dithered pass near 0.228 puts the structure in the
+load, and a pass near one puts it in the grid. Until then the frontier row
+carries the measurement and not its cause, and the price dithering charges on
+this load is unmeasured.
 
 ### Dither seed phase selection
 

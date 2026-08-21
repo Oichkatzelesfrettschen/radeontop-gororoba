@@ -193,9 +193,9 @@ each lane's window-to-window scatter departs from what an independent sampler at
 the same rate would produce, with the degrees of freedom the run supplies and the
 effective sample size that follows. A reading above one names excess scatter,
 which a sampling grid meeting a preferred phase of a periodic load and a load
-that changes between windows both produce; a reading below one names a grid that
-covers the load's phases more evenly than a random sampler would, which no load
-variation can cause.
+that changes between windows both produce; a reading below one names a sampler
+that meets its load more evenly than a random one would, which rules out a
+changing load and correlated read loss, since both add variance.
 
 ```sh
 tools/capture-window-dispersion.py capture.log

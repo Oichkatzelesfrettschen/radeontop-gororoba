@@ -13,9 +13,9 @@ what it reads on retained RS482 captures.
 
 The result the estimator delivers is a per-run number that says how much
 information the sampler actually collected. On the retained vertex-build load the
-exact 120 Hz grid reaches the precision an independent sampler would need about
-4.4 times as many samples to reach. On a load periodic at about one sample slot
-the same grid loses by a comparable factor in the other direction. One statistic
+120 Hz exact grid reaches the precision an independent sampler would need about
+4.4 times as many samples to reach. On a load periodic at about one sample slot a
+fixed grid loses by a comparable factor in the other direction. One statistic
 covers both, computed from counts the capture already carries.
 
 ## The statistic
@@ -76,11 +76,11 @@ N_eff = N / max(1, D_high)
 and the duty interval is `p +/- z * sqrt(p*(1-p)/N_eff)`. Taking the upper limit
 rather than the point estimate keeps a run from claiming more precision than its
 own degrees of freedom support. Clamping at one keeps an underdispersed reading
-from narrowing anything: a grid that samples a periodic load evenly does collect
-more information than an independent sampler would, and saying so as a narrower
-confidence interval would rest a precision claim on the load staying periodic for
-the whole run. The dispersion figure reports the gain; the interval does not
-spend it.
+from narrowing anything: a sampler that meets a structured load evenly does
+collect more information than an independent one would, and saying so as a
+narrower confidence interval would rest a precision claim on that structure
+holding for the whole run. The dispersion figure reports the gain; the interval
+does not spend it.
 
 ### What excess scatter does and does not identify
 
@@ -92,13 +92,22 @@ does not isolate it, and the discriminator is a paired exact and dithered pass
 over one load session, interleaved so a drifting load reaches both grids in the
 same proportion.
 
-`D` below one carries a stronger conclusion, because the alternatives run one
-way. A nonstationary load adds variance across windows and correlated read loss
-adds variance across windows; neither removes it. Under-dispersion requires the
-within-window sample sequence to be negatively correlated or the phase coverage
-to be more even than random, and on a fixed grid against a periodic load those
-are the same statement. An underdispersed reading therefore attributes itself to
-the grid's phase geometry without a dithered control to exclude the load.
+`D` below one excludes a different set of causes. A nonstationary load adds
+variance across windows and correlated read loss adds variance across windows;
+neither removes it, so an underdispersed reading rules both out. What it requires
+is structure in the sampler and the load taken together, and two structures
+produce it. A grid whose phase set is commensurate with a periodic load meets the
+same phases every window. A load whose busy fraction varies from slot to slot in
+a pattern that repeats window to window makes each sample a Bernoulli draw at its
+own rate rather than at one pooled rate, and a sum of Bernoulli draws at unequal
+rates carries less variance than a binomial at their mean. The second survives a
+dither, because the dither moves a sample inside its own slot and leaves the
+slot's own busy fraction where it was.
+
+One capture does not separate them, and the discriminator is a dithered pass over
+the same load: a reading that stays below one puts the structure in the load's
+own distribution of busy time across slots, and a reading that moves to one puts
+it in the grid's phase set.
 
 ### Where the approximation fails
 
@@ -124,7 +133,7 @@ so the phase sequence is a rotation by `alpha = frac(T_s / T_L)`. A window of `M
 samples covers the arc `a = M * alpha` of the load's cycle, modulo one. Three
 regimes follow, and the arc `a` is the coefficient that separates them.
 
-### Oversampled, a much less than one is false and a much greater than one holds
+### Oversampled, where the arc spans many cycles
 
 When the window spans many cycles the rotation equidistributes. The count of
 samples landing inside the on-arc deviates from `M * d` by a discrepancy term
@@ -139,7 +148,7 @@ D -> mean(E^2) / (M * d * (1-d))
 which falls as the window lengthens. This is systematic sampling of a periodic
 population, and it is the regime where a fixed grid beats a random one.
 
-### Near resonance, a comparable to one or smaller
+### Near resonance, where the arc covers a fraction of one cycle
 
 When `T_s` is close to `T_L` or to a multiple of it, `alpha` is small and the
 window sweeps only a fraction of a cycle. The window mean is then the average of
@@ -199,25 +208,32 @@ approximation supports.
 | `vapphase-continuous-600s` | vgt | 60 | 0.1351 | 1.791 | 1.287 to 2.665 | overdispersed |
 | `vapphase-restarting-10s` | vgt | 60 | 0.1281 | 1.902 | 1.367 to 2.830 | overdispersed |
 
-### The grid beats the independent null by a factor of four on a periodic load
+### The sub-binomial regime, measured, with its cause open
 
 The vertex-build capture is the sub-binomial regime on silicon. Its 60 windows
 each validate all 120 reads, and the per-window busy counts run from 8 to 15 with
-a standard deviation of 1.49 against a binomial 3.16. The exact grid places the
-same phase set inside every window, so every window catches nearly the same
-number of busy phases, and the duty estimate carries the precision an independent
-sampler would need about 4.4 times as many samples to reach. Four lanes read the
+a standard deviation of 1.49 against a binomial 3.16. The duty estimate therefore
+carries the precision an independent sampler at the same rate would need about
+4.4 times as many samples to reach, and the single-rate binomial model credits it
+with a quarter of the information it actually collected. Four lanes read the
 identical `D = 0.228` because `GUI_ACTIVE`, `GA_BUSY`, and `CF_PIPE_BUSY` assert
 together on this part, which the lane-load matrix already establishes; `ENG_EV`
 and `CP_CMDSTRM` carry their own counts and their own values.
 
-That figure is the price dithering pays on this load. It is a variance price, not
-a bias price, and the output reports it, which is why it does not overturn the
-shipped default. The failure dithering prevents is a duty figure that is simply
-wrong, bounded by nothing; the cost it charges is a wider spread that the run
-publishes. Naming the cost per run is what the estimator adds: a consumer now
-reads how much the default spent on the load actually in front of it rather than
-inheriting a decision taken on a different one.
+The capture ran on the exact grid, and no dithered pass covers this workload, so
+the two structures above stay unseparated: the grid may be meeting a commensurate
+phase set, or the load may be dividing its busy time across slots in a pattern
+that repeats. What the reading does establish is that neither a drifting load nor
+correlated read loss produced it, since both add variance.
+
+That distinction decides what the figure says about the shipped default. If the
+grid's phase set carries it, dithering this load gives the factor back and the
+number is the price the default pays; if the load's own structure carries it, a
+dithered pass reads the same 0.228 and the default costs nothing here. The
+dithered vertex-build pass in `docs/open-work.md` settles which. Either way the
+default stands on its own footing, because what dithering prevents is a duty
+figure that is simply wrong and bounded by nothing, while what it can cost is a
+wider spread the run publishes.
 
 ### A real-silicon binomial control
 
@@ -297,6 +313,11 @@ The estimator makes claims that a run can break.
   refutes the claim that the grid's phase geometry drives the contrast. The
   prediction is `D` near 11 for the exact grid and near 1.6 for the dithered one,
   which are the retained scatter ratios squared.
+- A dithered pass over the vertex-build load that reads `D` near 0.228 again puts
+  the sub-binomial structure in the load's own distribution of busy time across
+  slots; a pass that reads near one puts it in the exact grid's phase set. Either
+  outcome resolves the attribution the retained capture leaves open, and a pass
+  that reads above one refutes both readings of it.
 - An interleaved repetition of the four-grid texture-fill comparison in which
   seed 1 again reads overdispersed while the exact grid and the other seeds do
   not establishes a seed-specific phase selection; a repetition in which the
