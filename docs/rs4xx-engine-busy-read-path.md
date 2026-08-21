@@ -357,11 +357,25 @@ Var(p_sample) = (1/N^2) * [ N*g_0 + 2 * sum((N-k) * g_k for k in 1..N-1) ]
 ```
 
 with `g_k` the lag-`k` autocovariance. Positive autocorrelation shrinks the
-effective sample size, so the IID figure is a lower bound on the true spread. The
-88 to 90 percent band the command-stream lane occupies in the recorded run is
-consistent with that figure but is not explained by it; separating them needs an
-autocorrelation estimate or repeated independent windows, neither of which is
-retained.
+effective sample size, so the IID figure understates the true spread wherever the
+autocorrelation runs that way, which adjacent samples inside one frame, command
+batch, or scheduler episode produce. A fixed grid against a periodic load runs
+the other way: it places the same phase set inside every window, which is a
+negative correlation at the window scale, and there the IID figure overstates the
+spread. The 88 to 90 percent band the command-stream lane occupies in the
+recorded run is consistent with the IID figure but is not explained by it.
+
+Repeated windows separate them. A capture retains, per window and per lane, the
+busy count and the valid read count, so the scatter of the per-window duty
+figures against what each window's own denominator implies measures the
+effective sample size directly, without an autocorrelation estimate. Captures of
+45 and 60 windows on RS482 read that dispersion from 0.23 to 1.9 across named
+loads, so the IID variance understates the observed one by a factor near two on
+some loads and overstates it by a factor near four on others.
+`docs/window-dispersion-and-effective-sample-size.md` derives the estimator and
+carries the readings; `tools/capture-window-dispersion.py` computes it. A capture
+of three or five windows carries too few degrees of freedom to answer the
+question, which is why the run-length rule there asks for at least 30.
 
 ### The sample grid is absolute, and its shortfall is reported
 

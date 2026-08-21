@@ -141,7 +141,8 @@ LIBS += $(shell pkg-config --libs ncursesw 2>/dev/null || \
 		echo "-lncurses")
 
 .PHONY: all check check-build-identity check-cli-docs check-dist \
-	check-test-dependencies clean install man dist source-intelligence FORCE
+	check-test-dependencies check-window-dispersion clean install man dist \
+	source-intelligence FORCE
 
 all: $(bin)
 
@@ -178,6 +179,7 @@ check: $(tests)
 	./tools/check-build-identity.sh --self-test
 	./tools/check-dist.sh --self-test
 	./tools/check-test-dependencies.sh --self-test
+	$(PYTHON) ./tools/capture-window-dispersion.py --self-test
 
 check-build-identity:
 	./tools/check-build-identity.sh --self-test
@@ -190,6 +192,9 @@ check-dist:
 
 check-test-dependencies:
 	./tools/check-test-dependencies.sh --self-test
+
+check-window-dispersion:
+	$(PYTHON) ./tools/capture-window-dispersion.py --self-test
 
 tests/collector_test: tests/collector_test.c collector.c include/collector.h
 	$(CC) $(TEST_CFLAGS) $(CPPFLAGS) -Iinclude -pthread \

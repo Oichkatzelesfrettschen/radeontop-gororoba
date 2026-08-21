@@ -114,6 +114,7 @@ make check-build-identity
 make check-cli-docs
 make check-dist
 make check-test-dependencies
+make check-window-dispersion
 make install PREFIX=/usr DESTDIR=./staging
 ```
 
@@ -185,9 +186,28 @@ source_intelligence_dir=$(mktemp -d)
 make source-intelligence SOURCE_INTELLIGENCE_DIR="$source_intelligence_dir"
 ```
 
+A capture written by `-d` retains, per window and per lane, the busy count and
+the valid read count that produced the reported percentage. The dispersion
+analyzer reads those counts across the windows of one capture and reports how far
+each lane's window-to-window scatter departs from what an independent sampler at
+the same rate would produce, with the degrees of freedom the run supplies and the
+effective sample size that follows. A reading above one names excess scatter,
+which a sampling grid meeting a preferred phase of a periodic load and a load
+that changes between windows both produce; a reading below one names a sampler
+that meets its load more evenly than a random one would, which rules out a
+changing load and correlated read loss, since both add variance.
+
+```sh
+tools/capture-window-dispersion.py capture.log
+tools/capture-window-dispersion.py --json capture.log > dispersion.json
+```
+
 The [architecture and evidence model](docs/architecture-and-evidence.md)
 separates source, build, runtime, and silicon claims. The [open-work ledger](docs/open-work.md)
-names each unresolved gate and its falsifier.
+names each unresolved gate and its falsifier. The
+[window dispersion model](docs/window-dispersion-and-effective-sample-size.md)
+derives the estimator, decomposes what sets its value, and reports what it reads
+on retained RS482 captures.
 
 ## Translations
 

@@ -186,6 +186,38 @@ The lower endpoint assigns every unobserved slot idle. The upper endpoint
 assigns every unobserved slot busy. The interval narrows to the point estimate
 only when every nominal slot produces a valid read.
 
+### Window dispersion and effective sample size
+
+Both intervals above describe missing data. Neither describes how much
+information the observed samples carry, because `sqrt(p(1-p)/V)` assumes the
+samples are independent and a fixed grid against a periodic load makes them
+anything but. The counts that settle it are already retained: each window
+publishes its own `B` and `V`, so the scatter of the per-window duty figures
+against what each window's denominator implies is Pearson's dispersion
+
+```text
+D = sum( (B_i - V_i*p)^2 / (V_i*p*(1-p)) ) / (W - 1)
+```
+
+over `W` windows, and `N_eff = N / max(1, D_high)` follows from its upper
+confidence limit. Clamping at one keeps an underdispersed reading from narrowing
+an interval on the assumption that the structure producing it holds for the whole
+run. Excess scatter has several causes and bounds the sampler's contribution
+rather than isolating it. A reading below one rules out a changing load and
+correlated read loss, because both add variance and neither removes it, and
+leaves two structures that a single capture does not separate: a grid whose phase
+set is commensurate with a periodic load, and a load whose busy fraction varies
+from slot to slot in a repeating pattern. A dithered pass over the same load
+separates them.
+
+`tools/capture-window-dispersion.py` computes this from a retained capture and
+adds no sample-path code, so it changes neither the collector nor the packaged
+binary. `docs/window-dispersion-and-effective-sample-size.md` derives the
+estimator, decomposes the arc coverage that sets its value, and carries the
+RS482 readings: 0.228 on a vertex-build load sampled on the exact grid, 0.969 on
+a solid-fill load with no commensurate period, and 1.79 to 1.90 on the VAP-phase
+loads.
+
 ### Dither selection effect
 
 Let a slot have width `T`, let a seeded dither choose offset `D` uniformly in
@@ -513,6 +545,9 @@ substitute for a target result.
 | Capture records parse as intended | C formatter controls plus Python JSON parse and byte round trip | unit-tested and target-replayed |
 | Missing-data bounds contain every missed-slot assignment | arithmetic mutations plus a lossy target run | unit-tested and retained as a bounded target interval |
 | Dither removes phase lock without selection bias | attempted/accepted phase histograms under injected lateness | unresolved |
+| The reported duty carries its own effective sample size | window dispersion over a run long enough to resolve it | source-backed, unit-tested, and target-computed on retained RS482 captures |
+| The sub-binomial regime appears on this part | window dispersion over a run long enough to resolve it | target-computed at D = 0.228 on the vertex-build load |
+| The exact grid rather than the load produces that regime | a dithered pass over the same load | unresolved |
 | Backend and 2D bits expose on RS482 | higher-rate, load-identified register capture | unresolved |
 | Publication timing names its signed endpoint relation | virtual-clock oracle plus signed target offsets | target deviation retained; source contract unresolved |
 
