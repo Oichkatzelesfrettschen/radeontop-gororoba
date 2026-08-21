@@ -61,6 +61,17 @@ restate one asks for a narrower contract or evidence class.
   Slot membership follows the grid, so slot count, window boundaries, and the
   attempted-plus-missed identity remain invariant. Omitting the flag keeps the
   exact grid, which is what makes two runs of one workload directly comparable.
+- A capture's retained per-window busy and valid counts carry the duty figure's
+  own effective sample size. `tools/capture-window-dispersion.py` reads them
+  across the windows of one capture and reports Pearson's dispersion with the
+  degrees of freedom the run supplies, and the effective sample size follows from
+  the interval's upper limit so a reading below one never narrows anything.
+  Excess scatter bounds the sampler's contribution rather than isolating it; a
+  reading below one attributes itself to the grid, because load change and
+  correlated read loss both add variance and neither removes it. The statistic
+  equals the square of the scatter ratio the target reports already carry, which
+  was verified independently on `dither-seed-grid.dump` at 1.1756 and 1.3821. The
+  analyzer touches no sample path, so package identity is unchanged.
 - Seven unit binaries cover capture serialization, collector scheduling and
   failure semantics, device admission and clock conversion, and strict RS480
   observation parsing. A Python standard-library gate parses complete header,
@@ -137,6 +148,12 @@ target gates for candidate `f9d9e471`:
   hashes, command vectors, live-load witnesses, kernel before/after data,
   hazard search, JSON records and footers, locks, synchronization, and nested
   and outer SHA-256 manifests.
+
+Its captures run three and five windows, so they carry no dispersion verdict:
+a lane reading exactly one at five windows carries the interval 0.36 to 8.27, and
+the two exact-grid load passes read the vgt lane at 2.97 and 1.44 on opposite
+sides of the threshold. The bundle remains decision-grade for the containment and
+control-candidate claims it was built to prove.
 
 The 120 Hz paths cover every slot under the sustained texture load. The 1000 Hz
 dithered path services 4107 of 5000 slots, so its missing-data interval remains
@@ -292,6 +309,13 @@ and the grid accounts for the contrast at p = 0.0011 under the null that it does
 not. The session's own load moved 0.00611 between its opening and closing census
 slices.
 
+Those ratios are the square roots of Pearson's window dispersion, so they read as
+`D = 10.96` and `D = 1.59` against the 0.99-slot load and `D = 0.0625` and
+`D = 0.221` against the 7.18-slot one. `tools/capture-window-dispersion.py`
+computes that statistic directly from a retained capture, so a repetition of
+these runs reports its own coefficient with the degrees of freedom the run
+supplies rather than through an offline scatter calculation.
+
 An exact grid therefore samples a cycle it oversamples more evenly than a random
 sampler would, and meets a preferred part of a cycle it samples about once, where
 the pooled figure still converges while any single window misreports. Whether
@@ -316,6 +340,29 @@ capture object. A virtual-clock case injects a known lateness distribution and
 a periodic square-wave backend. The gate proves the attempted distribution,
 accepted distribution, inclusion probability, and reported duty against their
 analytic values. A mutation that discards late-slot attempts fails the gate.
+
+Window dispersion narrows what remains here rather than replacing it. Dispersion
+measures what the accepted phases cost the estimate and runs against every
+retained capture; phase bins say where inside its slot each accepted sample
+landed and need the collector change. The contract this row still owns is the
+inclusion probability `P(accepted | L) = max(0, 1 - L/T)` proven against injected
+lateness, which no dispersion figure supplies. A run whose dispersion reads
+binomial leaves the selection question open, because an unrepresentative phase
+set biases the duty without scattering the windows.
+
+### Window-dispersion calibration against analytic regimes
+
+The dispersion analyzer calibrates against synthetic count sequences, which
+proves the statistic and the parser but not the model that predicts the value.
+Generate captures from the virtual clock and a periodic square-wave backend whose
+period, duty, and jitter are set rather than measured, sweep the arc coverage
+`a = M * frac(T_s / T_L)` across the oversampled, near-resonant, and randomized
+regimes, and compare each run's dispersion with the closed form in
+`docs/window-dispersion-and-effective-sample-size.md`. The gate proves the
+direction and the order of the coefficient at each arc, and a mutation that
+replaces the grid with a per-sample uniform draw must drive every regime to one.
+Independent windows must read away from one at no more than the nominal five
+percent, which calibrates the false-positive rate the target runs inherit.
 
 ### Collector wake-up lateness distribution
 
@@ -428,6 +475,32 @@ each against a mean read of 2854, so the schedule reaches the slot period first
 at every rate the command line admits. A discriminator run separates preemption
 from device latency inside that 112 microseconds.
 
+### Window-dispersion contrast between the two grids
+
+The retained captures read the sub-binomial regime once, at `D = 0.228` on the
+vertex-build load, and never read the aliased regime, because no retained capture
+pairs a load periodic at about one sample slot with both grids. Repeat the
+fourteen-phase design that produced the 3.31 and 1.26 scatter ratios, holding one
+unbroken load session at a period near one sample slot, alternating exact and
+dithered slices with the leading grid alternating between pairs, and take at
+least 45 windows per slice. The prediction is `D` near 11 for the exact grid and
+near 1.6 for the dithered one, which are those ratios squared, and each slice's
+interval must exclude the other grid's point estimate. A pair that agrees within
+its intervals refutes the claim that the grid's phase geometry drives the
+contrast.
+
+### Dither seed phase selection
+
+Three seeds and one exact grid ran the same texture-fill load in sequence, and
+seed 1 read `D = 2.005` with its interval clear of one at `p = 0.0002` while the
+exact grid and the other two seeds read binomial. Coverage does not account for
+it: the seeds retain 116.6 to 117.0 slots per window with per-window deviations
+of 1.65 to 1.99, and seed 1 sits inside that spread. The passes ran one after
+another, so load drift between passes and a seed-specific phase selection are not
+separated. Interleave the four grids in slices with the leading grid alternating
+between pairs. Overdispersion that follows the seed establishes phase selection;
+overdispersion that follows pass order attributes it to the load.
+
 ### RS482 2D lane discriminator
 
 Record the X server acceleration method from its log or configuration, hold an
@@ -453,6 +526,9 @@ paths behaviorally identical.
 
 ## Evidence retained elsewhere
 
+`docs/window-dispersion-and-effective-sample-size.md` owns the dispersion
+estimator, the arc-coverage decomposition that sets its value, and the readings
+computed from the `rs482-radeontop-lane-load-discrimination` bundle.
 `docs/rs4xx-engine-busy-read-path.md` owns the register-mapping model. Retained
 probes, result bundles, hazard policy, and target-silicon verdicts live in
 `steinmarder-r300` under `src/re/r300/`. The admitted candidate bundle above

@@ -204,7 +204,10 @@ tools/capture-window-dispersion.py --json capture.log > dispersion.json
 
 The [architecture and evidence model](docs/architecture-and-evidence.md)
 separates source, build, runtime, and silicon claims. The [open-work ledger](docs/open-work.md)
-names each unresolved gate and its falsifier.
+names each unresolved gate and its falsifier. The
+[window dispersion model](docs/window-dispersion-and-effective-sample-size.md)
+derives the estimator, decomposes what sets its value, and reports what it reads
+on retained RS482 captures.
 
 ## Translations
 
