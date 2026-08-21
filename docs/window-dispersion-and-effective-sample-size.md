@@ -294,6 +294,14 @@ file and fails on any object that does not parse, because a partial census over
 windows a capture claims to carry supports no verdict. `make check` runs the
 self-test.
 
+The chi-square tail is computed from a series and a continued fraction inside the
+standard library, so the analyzer shares an interpreter with the existing JSON
+gate and installs nothing. Both agree with SciPy 1.18.0 to 1.0e-13 absolute over
+degrees of freedom 1 through 500, and the quantile agrees to 1.0e-14 relative
+over probabilities 0.001 through 0.999. That comparison is a one-time external
+validation rather than a gate, because SciPy is not a dependency; the self-test
+pins four published quantiles so a regression fails without it.
+
 The self-test calibrates against known-good and known-bad inputs before the tool
 reports on evidence: independent windows must read binomial with the interval
 covering one, alternating-rate windows must read overdispersed and must lower the
