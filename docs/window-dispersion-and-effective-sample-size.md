@@ -12,8 +12,8 @@ derives the estimator that walks it, decomposes what sets its value, and reports
 what it reads on retained RS482 captures.
 
 The result the estimator delivers is a per-run number that says how much
-information the sampler actually collected. On the retained vertex-build load the
-120 Hz exact grid reaches the precision an independent sampler would need about
+information the sampler actually collected. The retained vertex-build capture
+reaches the precision an independent sampler at the same rate would need about
 4.4 times as many samples to reach. On a load periodic at about one sample slot a
 fixed grid loses by a comparable factor in the other direction. One statistic
 covers both, computed from counts the capture already carries.
@@ -76,11 +76,12 @@ N_eff = N / max(1, D_high)
 and the duty interval is `p +/- z * sqrt(p*(1-p)/N_eff)`. Taking the upper limit
 rather than the point estimate keeps a run from claiming more precision than its
 own degrees of freedom support. Clamping at one keeps an underdispersed reading
-from narrowing anything: a sampler that meets a structured load evenly does
-collect more information than an independent one would, and saying so as a
-narrower confidence interval would rest a precision claim on that structure
-holding for the whole run. The dispersion figure reports the gain; the interval
-does not spend it.
+from narrowing anything. The reading does say the run collected more information
+than one binomial rate credits it with, and the clamp is conservative for a
+different reason: the structure that produced the gain is unidentified, and a
+narrower interval would assert that whichever structure it was holds for the
+whole run. The dispersion figure reports the gain; the interval does not spend
+it.
 
 ### What excess scatter does and does not identify
 
