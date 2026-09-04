@@ -7,11 +7,7 @@ rules. Codex, compatible agents, and human contributors read it directly. Other
 root agent files exist only to load it for tools that require a tool-specific
 filename.
 
-`CLAUDE.md` loads `@AGENTS.md`, spelled in that exact case because imports
-resolve literally on a case-sensitive filesystem, and adds Claude Code operating
-notes after the load line. Root agent files are regular tracked files; the body
-lives here, and a loader carries tool-specific loading notes only, since copied
-doctrine drifts into conflicting instructions.
+`CLAUDE.md` is a tracked repository-relative symbolic link to `AGENTS.md`, so Claude Code reads this same body and the rules live in one place.
 
 The doctrine here descends from `mesa-26-gororoba/AGENTS.md` and keeps the parts
 that survive the move to a GPL3 C monitoring tool: naming, comment voice,
@@ -621,3 +617,48 @@ is evidence, and it changes the model or it does not, on the record either way.
 
 Final artifacts end more accurate, reproducible, navigable, testable, and
 source-grounded than their inputs.
+
+## Claude Code notes
+
+These notes came from the retired standalone `CLAUDE.md` loader and hold the Claude Code specifics that a tool-generic guide leaves out. A rule that applies to every agent lives in the sections above.
+
+### Loading rule
+
+Each section below names the `AGENTS.md` section it defers to, so a rule has one
+home and this file adds only what is specific to Claude Code. A rule that would
+apply to any agent belongs in `AGENTS.md` instead.
+
+When Claude Code starts inside a parent workspace or a temporary worktree, load
+`radeontop-gororoba/AGENTS.md` before editing radeontop paths. These rules govern
+every edit under this repository regardless of launch directory.
+
+### Claude Code operating notes
+
+Inspect the real repository with Claude Code tools before editing; memory, prior
+summaries, and recalled context are leads, and `AGENTS.md` plus source are
+authority.
+
+Inspect the diff after every edit; the adversarial staged-diff read from
+`AGENTS.md` runs before any commit or completion claim.
+
+Claude Code task tracking is transient working state; durable state lands in
+code, commit messages, findings, documentation, or retained bundles.
+
+Subagent limits, the read-only default, and citation duties live in `AGENTS.md`
+under `Tooling for investigation and audits`.
+
+### Response shape
+
+`AGENTS.md` owns how a response reads, under `Response and report prose`, and
+that section governs every response about this repository: the answer first,
+one new fact per sentence, plain verbs over nominalizations, quantities at the
+precision the argument uses, and scarce emphasis. The mandatory content lives
+there too -- outcome, decision, evidence, validation run, an unrun check as
+`not run` with its reason, and residual uncertainty.
+
+Claude Code renders a response as GitHub-flavored Markdown in a terminal, so
+headings, tables, and bold render live, and the scarcity rule applies to what
+they mark on a screen the reader scrolls once.
+
+Deliberation lives in thinking blocks. Chained reasoning reaches the response
+only where it explains the next action or a validation requirement.
