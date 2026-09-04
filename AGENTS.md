@@ -57,8 +57,8 @@ the nearest principle.
 - Local absolute paths, private host FQDNs, per-user toolchains, raw IP
   literals, and worktree names are workspace-local facts and live outside the
   tree.
-- Instruction files are regular tracked files; each loader holds the
-  `@AGENTS.md` reference plus tool-specific notes.
+- `CLAUDE.md` is a tracked repository-relative symbolic link to `AGENTS.md`;
+  any other loader holds the `@AGENTS.md` reference plus tool-specific notes.
 
 ### Root cause and evidence
 
