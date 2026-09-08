@@ -28,7 +28,7 @@ _basecommit='15521706464b78dc9af60495b648b9d536b4d085'
 # to a commit already merged to master, because a squash or rebase merge
 # rewrites the object ids a pull request head carried and can leave a pinned
 # pre-merge object unreachable.
-_commit='1b89873e9ba4167bf71eb1ad516fe581e59d69d5'
+_commit='f2345d45c995b5f1336d6c88e924f0b73ab3f0fa'
 
 # pkgver identifies the source and pkgrel identifies the packaging.  Changing
 # _commit changes pkgver and resets pkgrel to 1; changing the recipe, the
@@ -36,7 +36,7 @@ _commit='1b89873e9ba4167bf71eb1ad516fe581e59d69d5'
 # _commit increments pkgrel.  The literal below equals what pkgver() derives for
 # _commit, and `makepkg --nobuild && git diff --exit-code PKGBUILD` proves it,
 # because makepkg rewrites this line when the two disagree.
-pkgver=1.4.r117.g1b89873e9ba4
+pkgver=1.4.r141.gf2345d45c995
 pkgrel=1
 
 pkgdesc="GPU utilization monitor with RS480/RS482 (RS4xx) BAR2 read-path"
@@ -72,6 +72,9 @@ build() {
   # rather than whichever repository surrounds the build directory.  plain=1
   # withholds the Makefile's own -s, because makepkg owns stripping and the
   # debug-symbol split.
+  # The RS485M host uses K8. Keep the compiler target at the x86-64 baseline
+  # even when the build host's makepkg configuration selects a newer CPU.
+  export CFLAGS="$CFLAGS -march=x86-64 -mtune=generic -Werror"
   make PREFIX=/usr plain=1 VERSION="$pkgver"
 }
 
