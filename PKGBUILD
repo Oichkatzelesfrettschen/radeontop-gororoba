@@ -1,4 +1,4 @@
-# Maintainer: Terascale Functionalists
+# Maintainer: First Principalists
 #
 # Packages the RS480/RS482 (RS4xx) read-path-enhanced radeontop that ships in
 # this fork.  On the pre-R600 R300-class IGP the radeon DRM read-reg ioctl
