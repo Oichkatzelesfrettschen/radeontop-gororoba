@@ -504,7 +504,7 @@ alongside this one in the workspace. Cite a sibling by repository name plus its
 repository-relative path, matching the `radeon-custom` README convention, and
 let the workstation supply the equivalent absolute path.
 
-- `steinmarder-r300`: the RS482/RS485 (Dell Vostro 1000, PCI `1002:5974`)
+- `steinmarder-r300`: the RS485M (Dell Vostro 1000, PCI `1002:5974`)
   evidence lane and the primary peer for the R300-class read path here. It owns
   probes, manifests, logs, result bundles, falsifiers, and hazard policy under
   `src/re/r300/`, with `findings/`, `results/`, `probes/`, `corpora/`,
@@ -522,7 +522,7 @@ let the workstation supply the equivalent absolute path.
   the DKMS revision that produced it.
 - `radeontool-gororoba`: the `radeontool regmatch` source used for the raw
   `RBBM_STATUS` histograms that rank-1 gauge evidence rests on.
-- `vostro1000-re`: the RS482 host-platform lane, holding the board, ACPI,
+- `vostro1000-re`: the RS485M host-platform lane, holding the board, ACPI,
   COMBIOS, and firmware evidence under `systems/dell-vostro-1000/`.
 
 Cite the exact path spelling that exists in the sibling. When the sibling
