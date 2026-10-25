@@ -182,7 +182,7 @@ kernel identities, so its measurements remain bounded supporting evidence.
 
 | Field | Value |
 |---|---|
-| Target | RS482, PCI `1002:5974`, host `cachyos-vostro1000` |
+| Target | RS485M, PCI `1002:5974`, host `cachyos-vostro1000` |
 | Sampler | `radeontool regmatch 0xe40`, 250 reads |
 | Workload | `glmark2-es2` texture scene, 800x600 fill at 126 FPS, live X server on r300 |
 | Samples | 157x `0x00000140`, 91x `0x8401C100`, 1x `0x84116100`, 1x `0x8401C12B` |
@@ -449,7 +449,7 @@ reference or decision-grade through repetition in the read-path model.
 
 ### Unretained on-target run report
 
-A prior local report names `cachyos-vostro1000`, RS482 PCI `1002:5974`, kernel
+A prior local report names `cachyos-vostro1000`, RS485M PCI `1002:5974`, kernel
 7.1.3-2-cachyos, a merged source revision, and `radeontop -m` at 120 Hz. Its raw
 bundle is absent from `steinmarder-r300`, so the table remains an unadmitted
 reproduction target.

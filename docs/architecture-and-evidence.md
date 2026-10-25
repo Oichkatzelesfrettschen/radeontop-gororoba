@@ -476,7 +476,7 @@ executed binary identity, post-map privilege, mapped DSO identity, and original
 manifest preimages.
 
 The retained run binds candidate
-`f9d9e4719e3a25b7d8d3b3c7ff7bac99c2a2b189` to RS482 PCI `1002:5974`,
+`f9d9e4719e3a25b7d8d3b3c7ff7bac99c2a2b189` to RS485M PCI `1002:5974`,
 subsystem `1028:022a`, on boot
 `da747e8a-2cff-47ac-bb5b-50d7e7ce7313`. The trace opens only resource2,
 maps 3668 bytes read-only through `RBBM_STATUS` at `0x0e40`, and records the

@@ -172,7 +172,7 @@ silicon evidence until a retained bundle supplies the exact binary and source
 digests, boot identity, commands, load liveness, kernel delta, and artifact
 hashes.
 
-Two runs on the RS482 target (PCI `1002:5974`) compared a control worktree at
+Two runs on the RS485M target (PCI `1002:5974`) compared a control worktree at
 the pre-change merge with a test worktree at `master`. Reads stayed confined to
 `RBBM_STATUS` (`0x0E40`) through the BAR2 `resourceN` window, and the boot
 identifier was identical at the start and end of both runs, so the K8
