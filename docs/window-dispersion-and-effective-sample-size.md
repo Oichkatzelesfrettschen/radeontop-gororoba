@@ -186,7 +186,7 @@ its exact value, and the measurements below carry the quantities.
 
 The readings come from the `steinmarder-r300` bundle
 `src/re/r300/results/rs482-radeontop-lane-load-discrimination`, captured on
-RS482 PCI `1002:5974` at 120 samples per second with one-second windows, by
+RS485M PCI `1002:5974` at 120 samples per second with one-second windows, by
 `radeontop-gororoba 1.4.r110.gf105aa8dd60b` under kernel 7.1.3-2-cachyos with
 `radeon-unified/0.7`. That binary predates the dither-by-default change, so a
 capture taken without `--dither-seed` runs the exact grid. Rows whose smallest
