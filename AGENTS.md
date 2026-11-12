@@ -22,6 +22,34 @@ rules. Codex, compatible agents, and human contributors read it directly.
 
 ## Hard rules
 
+### Generating principles
+
+Six principles generate the rules in this file. A case no rule names resolves by
+the nearest principle.
+
+1. Durable mechanism identity: every durable artifact -- name, comment, claim,
+   citation -- carries mechanism or content identity; chronology, actors, and
+   process ride in commits, findings, and registry metadata.
+2. Indicative voice: rules, comments, and reports state what an artifact is and
+   does, present tense, artifact as subject. A boundary takes its positive dual:
+   the restriction (`root privileges only`), the named home (`chronology lives
+   in the commit message`), or the mechanism itself (`the radeon read-reg ioctl
+   answers R600 and later, so R300-class parts read the BAR directly`). The
+   positive form entails the absence a negation would state. A hard-stop safety
+   boundary keeps its prohibition, where that is the whole content.
+3. Authority by name and rank: a load-bearing claim binds to a named source at
+   the highest available evidence rank; provenance detail rides in the commit
+   message and the finding.
+4. Evidence-class separation: known, hypothesized, and speculative stay marked;
+   build, runtime, and silicon stay distinct; prediction precedes observation,
+   and deviation is the finding.
+5. Single home per fact: each fact keeps one canonical location, and other sites
+   point to it; a hard-rule digest line plus one expansion section are the two
+   permitted homes.
+6. Smallest complete mechanism: a change, comment, or tool carries exactly its
+   distinct load-bearing facts -- complete, and free of stubs, decoration, and
+   repetition.
+
 ### Boundary and paths
 
 - This repository is a fork of upstream `clbr/radeontop`. Build, install,
