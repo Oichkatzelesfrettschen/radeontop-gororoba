@@ -3,21 +3,24 @@
 ## Instruction source
 
 `AGENTS.md` is the root instruction file for `radeontop-gororoba` and owns the
-rules. Codex, compatible agents, and human contributors read it directly. Other
-root agent files exist only to load it for tools that require a tool-specific
-filename.
+rules. Codex, compatible agents, and human contributors read it directly.
 
 `CLAUDE.md` is a tracked repository-relative symbolic link to `AGENTS.md`, so Claude Code reads this same body and the rules live in one place.
 
-The doctrine here descends from `mesa-26-gororoba/AGENTS.md` and keeps the parts
-that survive the move to a GPL3 C monitoring tool: naming, comment voice,
-evidence rank, falsification, and merge discipline. Mesa's Meson lanes, Vulkan
-ICD plumbing, conformance-suite machinery, and MIT header policy stay in Mesa.
+## Contributor essentials
+
+- Create a branch before the first edit and stage paths by name: an uncommitted edit has no owner. The default branch is `master`; work lands through a branch, a PR, and a merge to `master`, then the merged branch is deleted locally and on `origin`.
+- Write a commit subject as a component prefix plus the mechanism (`RS480: add a cf gauge for CF_PIPE_BUSY, the unmapped R300 engine lane`); write the body in one to five sentences naming the invariant, the change, and the evidence. Each commit builds and bisects, with formatting apart from logic. Keep a forge-appended `(#NNN)` off subjects.
+- Name branches, commit subjects, PR titles, comments, and filenames by mechanism, never by phase, wave, or actor: `rs480-add-cf-pipe-gauge`, not `rs480-phase2-fix`. Set the branch name, first commit subject, and PR title before the first push. Ordinal containers such as `set5` or `batch_2` and the word `tranche` stay out of names.
+- Write text emoji-free in American English; meaningful symbols stay. Comments state present-tense mechanisms and carry no issue numbers, PR chronology, local paths, or deictic time.
+- Keep secrets, private hostnames, and absolute local paths out of tracked files, commits, and logs; scripts discover the root with `repo_root=$(git rev-parse --show-toplevel)`.
+- Commits and PRs carry no AI attribution trailer; `Co-authored-by:` names human co-authors only. A patch sent to another project follows that project's disclosure policy, which the owner decides per submission.
+- Build under the Makefile's `-Wall -Wextra` with no new warning, run `shellcheck -S error` on shell changes, and run the checks under Build, package, and validation. An unrun check reads `not run` with its reason; a new verdict-producing script calibrates on a known-good and a known-bad input first.
+- Keep build, runtime, and silicon evidence apart, and mark known, hypothesized, and speculative claims. A hardware claim records the observation, the constraint, the hypothesis, the falsifier, and the command that produced the reading before the change. Cite how a code symbol was found with the location.
+- Privileged register and BAR access is hazardous: a path to it opens on one exact documented token, as the Security and hardware stop-line describes.
+- Merge by synthesis: keep every contribution that evidence has not refuted, and read `git diff --staged` before each commit.
 
 ## Hard rules
-
-These rules are enforceable. Later sections explain mechanism or rationale and
-never weaken or contradict them.
 
 ### Generating principles
 
@@ -47,18 +50,10 @@ the nearest principle.
    distinct load-bearing facts -- complete, and free of stubs, decoration, and
    repetition.
 
-### Boundary, paths, and instruction files
+### Boundary and paths
 
 - This repository is a fork of upstream `clbr/radeontop`. Build, install,
   package, and source-comment flows stand complete inside it.
-- Paths in checked-in work are repository-relative, PATH-resolved tools, or
-  explicit user roots; scripts discover the root with
-  `repo_root=$(git rev-parse --show-toplevel)`.
-- Local absolute paths, private host FQDNs, per-user toolchains, raw IP
-  literals, and worktree names are workspace-local facts and live outside the
-  tree.
-- `CLAUDE.md` is a tracked repository-relative symbolic link to `AGENTS.md`;
-  any other loader holds the `@AGENTS.md` reference plus tool-specific notes.
 
 ### Root cause and evidence
 
@@ -69,40 +64,18 @@ the nearest principle.
   identity tables, and `familycheck.sh` gates them.
 - A gauge claim rests on a register readback under a named load. A register
   decode from kernel headers is a hypothesis until silicon asserts the bit.
-- A hardware claim records the observation, the register or kernel source
-  constraint, the hypothesis, the falsifier, and the command that produced the
-  reading before the change.
-- Build, runtime, and silicon stay separate evidence classes.
 
-### Builds and verdicts
+### Builds and languages
 
-- Warnings and unexpected tool output are defects until explained.
 - Touched code builds cleanly under the Makefile's `-Wall -Wextra` and adds no
-  warnings.
-- The report records what was built, tested, skipped, blocked, or unavailable.
-- An unrun test reads `not run` with its reason.
-- Build targets and validation checks survive a narrow fix.
-
-### Languages and scripts
-
+  warnings. Build targets and validation checks survive a narrow fix.
 - C translation units stay at C11 or newer and keep the Makefile's configured
   standard.
 - Shell scripts are POSIX `sh`, matching `familycheck.sh`, `getver.sh`, and
   `getamdgpuids.sh`; a script that requires `bash` declares it.
-- Shell changes pass `shellcheck`.
 
-### Git, merge, and submission
+### Packaging
 
-- Branches, commit subjects, PR titles, source comments, and finding filenames
-  carry durable mechanism names. The branch name, first commit subject, and PR
-  title are set before first push.
-- The default branch is `master`. Work lands through a branch, a PR, and a merge
-  to `master`; the merged branch is then deleted locally and on `origin`.
-- Merges preserve all non-refuted content; the default resolution is union plus
-  synthesis. `git merge -X theirs`, `git checkout --theirs`, and blanket
-  conflict-marker stripping are selection, not synthesis.
-- A force-push to `master` carries explicit user sign-off and a commit message
-  explaining why.
 - `PKGBUILD` pins one merged source commit in `_commit`, and `pkgver` derives
   from it as `1.4.rN.g<abbrev-object-id>`. Advancing the pin changes `pkgver`
   and resets `pkgrel` to 1. Changing the recipe, the dependencies, the flags, or
@@ -115,15 +88,9 @@ the nearest principle.
 - The binary's `VERSION` identifies source. `pkgrel` identifies packaging and
   stays out of the binary version string.
 
-### AI disclosure, authorship, and copyright
+### Authorship, copyright, and license
 
-- When a commit carries AI-assisted creative work, it uses the `Assisted-by:`
-  trailer, or `Generated-by:` when AI generated almost the entire change.
-- `Co-authored-by:` names human co-authors only.
-- Trailer form, matching this repository's history:
-  `Assisted-by: Claude (Opus 4.8)`.
-- Historical pre-policy `Co-Authored-By: Claude` trailers stand; a force-push to
-  scrub them stays out.
+- Historical pre-policy `Co-Authored-By: Claude` trailers stand in merged history.
 - This repository is GPL3. Upstream radeontop headers, including
   `Copyright (C) YYYY Lauri Kasanen` and the GNU General Public License
   paragraph, stay verbatim through edits, splits, and file moves, with no second
@@ -133,26 +100,7 @@ the nearest principle.
   (`Copyright (c) YYYY <git config user.name>`) is LLM template output and gets
   stripped, as does an MIT or `Terascale Functionalists` line imported from a
   Mesa-derived tree.
-- Source headers carry copyright and license content only; AI disclosure such as
-  `(LLM-assisted)` lives in commit trailers.
-
-### Comments, prose, and safety
-
-- A source comment stands on its own for a radeontop maintainer six months
-  later, without this project's task tracker. It cites no fork issue number, PR
-  chronology, phase label, task number, author tag, local path, private host, or
-  deictic time.
-- New or modified source comments, commit messages, and documentation use
-  American (United States) English spelling.
-- A patch changes behavior or structure with intent: no mass reformat, no stub,
-  placeholder, dead code, or `TODO: finish later` prose absent explicit tracked
-  rationale.
-- Reports state results and decisions directly: the outcome, the decision, the
-  evidence, the validation that ran, and the residual uncertainty. A response
-  addressed to a person is plain English ordered by importance, under
-  `Response and report prose`.
-- A defect in privileged register or BAR access stops normal feature work;
-  contain and report it, then resume.
+- Source headers carry copyright and license content only; AI disclosure stays out of them.
 
 ## Project scope and priorities
 
@@ -168,11 +116,6 @@ priorities override later priorities.
 
 A gauge that renders a number the silicon does not produce is worse than an
 absent gauge. A lane a family lacks is display-gated on its mask.
-
-Investigate before editing. Read source, register documentation, kernel paths,
-commit history, and retained evidence. Work in this order: scope the task,
-identify the component, split claims, collect primary evidence, model the
-mechanism, design the change, implement, verify, and record the result.
 
 ## Evidence rank
 
@@ -205,28 +148,15 @@ from the `r300d.h` decode, and the rasterizer, texture, and render-backend lanes
 lost their gauges because the sampled RS482 conditions showed those bits clear
 throughout. `r300d.h` still names those fields.
 
-### Falsification record
+## Prediction form for gauge exposure
 
-Before a gauge or read-path change, record the direct observation, the register
-or kernel source constraint, the hypothesis, the falsification criterion, and
-the command that produces the reading.
-
-Prediction form: if bit N of `RBBM_STATUS` is exposed on this part, it asserts
-under `[named load]` and stays clear at idle. A bit that stays clear under load
-refutes the exposure hypothesis for the sampled rate, load, and part, and the
-lane is display-gated on that result. The decode keeps its field position and
-architectural name, which the register document establishes.
-
-A non-observation bounds the sampling that produced it. Record the rate, the
-window, and the load, because a higher-rate sampler can assert a bit a slower
-one misses.
-
-When a reading deviates from prediction, the deviation is the finding. Open a
-new investigation instead of changing the prediction after observation.
-
-Stop implementation and report when a hypothesis survives three independent
-falsification attempts, fails in an unexpected way, requires a non-obvious
-architecture choice, or contradicts a rank-1 or rank-2 source.
+If bit N of `RBBM_STATUS` is exposed on this part, it asserts under `[named
+load]` and stays clear at idle. A bit that stays clear under load refutes the
+exposure hypothesis for the sampled rate, load, and part, and the lane is
+display-gated on that result. The decode keeps its field position and
+architectural name, which the register document establishes. A higher-rate
+sampler can assert a bit a slower one misses, so a non-observation records its
+rate, window, and load.
 
 ## Chip identity and register names
 
@@ -287,210 +217,35 @@ Minimum validation by changed surface:
 - Shell scripts: `shellcheck` plus a known-good and a known-bad path.
 - Comments and documentation: comment hygiene and a source-reference audit.
 
-A pass claim rests on a run; an unrun test reads `not run` with its reason.
-
-## Durable names
-
-Use names from mechanism or content, not chronology, actors, work sessions, or
-review process. This applies to branch names, finding filenames, PR titles,
-commit subjects, source comments, and checked-in identifiers.
-
-Forbidden load-bearing identity includes waves, phases, missions, agents,
-worktrees, sessions, reviewers, PR numbers, task numbers, and dates that do not
-describe content.
-
-Examples:
-
-- Branch: avoid `rs480-phase2-fix`; use `rs480-add-cf-pipe-gauge`.
-- Commit subject: avoid `Wave 3 follow-ups`; use
-  `RS480: add a cf gauge for CF_PIPE_BUSY, the unmapped R300 engine lane`.
-- Comment: avoid `Phase 4 path`; use `RS480 BAR2 read path`.
-
-The first commit subject matters because a squash merge may reuse it even when
-the PR title was corrected later. Set branch name, first commit subject, and PR
-title before first push.
-
-Phase, wave, and chronology terms may appear only as secondary registry
-metadata, such as a `phase:` field in finding YAML.
-
-A name describes what is inside: content, target, or mechanism, not the act of
-collecting, grouping, staging, or sequencing. `tranche` is forbidden in
-branches, filenames, identifiers, and comments. `set`, `batch`, and `group` are
-forbidden as ordinal containers such as `set5` or `batch_2`, and allowed in
-descriptive domain compounds such as `batch_size`.
-
 ## Comments, commits, and Markdown
-
-The code is the primary text. Comments explain mechanisms that are not obvious
-from the next line of code. A useful comment records a silicon constraint, a
-register rule, a kernel ioctl rule, a measured quirk, an ABI boundary, or the
-reason a workaround preserves a correct reading.
 
 Follow local style first. radeontop C uses tab indentation, K&R braces, `//`
 line comments and `/* */` blocks, and the GPL3 file header. Mass reformatting
 enters only as an explicitly requested formatting migration.
 
-### Stating mechanism as fact
-
-State what a thing is and does, in positive declarative form, third-person
-present tense: `the kernel rejects RADEON_INFO_READ_REG on pre-R600 parts, so
-the BAR2 path carries the busy word`. The comment carries the mechanism and the
-constraint that makes it hold; correctness follows from the mechanism, so the
-reviewer assumes it and contrast framing falls away. A boundary takes its
-positive dual: the restriction, the named home, or the mechanism itself.
-
-Use one thought per comment; stack separate comments when steps are distinct.
-Default to a one-line trailing comment on the load-bearing line over a function
-header paragraph, and reserve a multi-line block for a genuine silicon quirk.
-Mechanical code reads bare.
-
-The language form follows the evidence class. Documented behavior takes the
-plain indicative. Reproduced-but-undocumented behavior names the part and the
-path where it was observed, so a reader knows the claim rests on a run rather
-than a register document. Conjecture carries a marker (`appears to`, `seems
-to`) or leaves.
-
-Placement follows scope. Architecture that persists across a file lives at file
-scope; the point of use carries the local link in the chain -- skip condition,
-bound state, offset rule; a branch comment states what distinguishes the
-branch, at the branch.
-
-A full mechanism comment orders its facts: the load-bearing claim, the named
-authority (register, bit, kernel symbol, ioctl), the consequence with an inline
-code fragment when clearer than prose, and the guard or scope. Most comments
-carry one or two of those elements.
-
-Source comments cite public, durable authority. Fork issue numbers, PR numbers,
-phase labels, worktree names, agent names, author tags, local absolute paths,
-private hosts, and deictic time (`currently`, `previously`, `our GPU`) live in
-the commit message or the PR description.
-
-Preferred shape:
-
-```text
-The radeon read-reg ioctl answers R600 and later. R300-class parts read
-RBBM_STATUS through the BAR2 resourceN node instead.
-```
-
-Bad shape:
-
-```text
-Phase 8 workaround from the agent branch.
-```
-
-### TODO comments
-
-A deferred-work comment opens with `TODO:`, `FIXME:`, `XXX:`, or `HACK:`, and a
-new marker comes from that four-item set. It names three mechanism elements:
-
-- missing work: the function, register, bit, kernel symbol, or specification
-  section that needs the change;
-- deferral reason: the silicon, ABI, or evidence constraint blocking completion;
-- tracking artifact: a durable function name, register name, upstream issue URL,
-  or silicon-constraint name. When no external issue exists, the named function
-  or register is the tracking artifact.
-
-Reviewer breadcrumbs, PR-thread references, phase labels, `AGENTS.md` rule
-numbers, and deictic references live in the commit message or PR description.
-
-### Commit and PR prose
-
-Commit subjects carry a component prefix and a concise mechanism, matching this
-repository's history: `RS480: add a cf gauge for CF_PIPE_BUSY, the unmapped R300
-engine lane`.
-
-Bodies are declarative prose. They open with the load-bearing claim, name the
-primary source by authority, state the consequence, and give the evidence: the
-register reading, the load, the observed values. `WHY:`, `WHAT:`, and `HOW:`
-section headers stay out; they strip the declarative voice and read as a filled
-template. Commits that predate this rule stand as historical artifacts.
-
-Build invocations, host names, and validation checklists live in the PR
-description. One commit per logical change; each commit stays buildable,
-reviewable, and bisectable. Formatting churn and logic changes ride separate
-commits.
-
-An appended `(#NNN)` on the subject moves to a trailer that carries the PR
-link. A squash-merge button that appends `(#NNN)` to the merged subject is a
-forge artifact rather than an author artifact, so it refutes no commit and
-justifies no history rewrite; passing an explicit merge subject keeps the
-suffix off the subject line.
-
-### Markdown
+Documented behavior takes the plain indicative. Reproduced-but-undocumented
+behavior names the part and the path where it was observed, so a reader knows
+the claim rests on a run rather than a register document. Conjecture carries a
+marker (`appears to`, `seems to`) or leaves.
 
 Markdown loaded by agents uses exactly one H1, heading depth no deeper than
 `###`, language tags on code fences, exact cross-references, and rule text as
-direct positive-declarative statements. Rule files carry plain ASCII,
-present-tense declarative text. Tables appear only when columns carry
+direct positive-declarative statements. Tables appear only when columns carry
 independent comparison value.
 
-## Response and report prose
+## Reply prose
 
-A response addressed to a person is a different genre from a commit body, and
-the rules for durable artifacts do not carry over to it. A commit body is read
-by a reviewer with the diff open, so it is dense, self-contained, and
-greppable. A response is read once, at speed, by someone who wants to know what
-happened. Compressing a response the way a commit body compresses yields text
-that carries every fact and communicates none of them. The sections below
-govern responses; `Comments, commits, and Markdown` governs the artifacts.
-
-### The answer comes first
-
-The opening sentence gives the outcome in plain words: what was asked, and what
-happened. Method, evidence, and caveats follow. A reader who stops after two
-sentences still has the result.
-
-### One new thing per sentence
-
-A sentence opens on something the reader already holds and closes on one new
-fact. A sentence whose subject, object, and modifier are all new leaves three
-unresolved referents in the air, and a paragraph of those reads as noise.
-Ordinary connectives -- because, so, but, which means -- state the relation
-between sentences, where a semicolon only implies it.
-
-### Plain words over nominalizations
-
-Name who does what to what. `A census showed those bits never turn on, so the
-three lanes stay masked` states the mechanism; `the masking of the lanes rests
-on a polling census` turns two processes into nouns and leaves the reader to
-reconstruct the agency. Verbs stay verbs.
-
-### Repetition serves a reader
-
-A response names a thing the same way every time and restates the fact the
-argument turns on. The rule against repetition governs code, comments, and
-durable documents, where a second copy of a fact is a second thing to maintain.
-Prose read once needs the reader to consolidate, and a placed restatement is
-how that happens.
-
-### Numbers appear as quantities
-
-A figure in prose carries the precision the argument uses: `about 96 million
-reads`, `roughly a fifth of the envelope`. Full-precision values, hashes, and
-object ids belong in the commit body, the finding, and the artifact, where they
-are grepped and checked. Eight significant figures in a sentence cite authority
-rather than state a quantity.
-
-### Emphasis stays scarce
-
-Bold marks the few sentences a reader must not miss; applied to every clause it
-marks nothing. Tables appear when columns carry independent comparison value,
-matching the Markdown rule.
-
-### Process narration earns its place
-
-The report states what the work produced. A correction, a retraction, or a
-refuted assumption enters when it changes what the reader should now believe or
-do, and a finding that came out of a mistake is reported as the finding. The
-sequence of attempts that reached the result stays in the commit body and the
-falsification record.
-
-### Directness costs no content
-
-The response still carries the outcome, the decision, the evidence, the
-validation that ran, an unrun check as `not run` with its reason, and the
-residual uncertainty. Plain ordering makes those easier to find rather than
-optional.
+A reply opens with the outcome in plain words: what was asked and what
+happened, so a reader who stops after two sentences holds the result. A
+sentence opens on something the reader already holds and closes on one new
+fact, and ordinary connectives (because, so, but) state the relation between
+sentences. Verbs stay verbs: `a census showed those bits never turn on, so the
+three lanes stay masked` names who did what. A figure carries the precision the
+argument uses (`about 96 million reads`); full-precision values and hashes
+belong in the commit body, the finding, and the artifact. Bold marks the few
+sentences a reader must not miss. A correction or retraction enters when it
+changes what the reader should now believe or do; the sequence of attempts
+stays in the commit body.
 
 ## Evidence boundary
 
@@ -499,8 +254,8 @@ and the source comments that make them intelligible. Retained probes, result
 bundles, findings, hazard policy, and the verdict assigned to a target-silicon
 run live in the sibling projects, and this repository carries the citation.
 
-Each sibling is an independent checkout with its own `AGENTS.md`; they sit
-alongside this one in the workspace. Cite a sibling by repository name plus its
+Each sibling is an independent checkout that sits alongside this one in the
+workspace. Cite a sibling by repository name plus its
 repository-relative path, matching the `radeon-custom` README convention, and
 let the workstation supply the equivalent absolute path.
 
@@ -533,62 +288,6 @@ Source comments prefer public register documentation, kernel symbols, DRM
 names, and exact hardware identity. Empirical fork evidence belongs in findings
 or commit messages unless the code needs the mechanism to be intelligible.
 
-## Tooling for investigation and audits
-
-Use the strongest available tool that matches the claim; a weaker text search
-yields when the claim requires a structural, indexed, or empirical tool.
-
-- Source navigation and reachability: `clangd`, `ctags`, GNU Global, `cscope`,
-  `rg`, `git grep`, `fd`, `git log -S`, `git log -G`, `git blame`.
-- Structural search: `ast-grep`, Semgrep, Coccinelle/`spatch`, `weggli`.
-- Static analysis: compiler diagnostics, `clang-tidy`, `scan-build`, `cppcheck`,
-  `sparse`, `shellcheck`.
-- Binary and symbolization: `gdb`, `objdump`, `nm`, `readelf`, `addr2line`.
-- Runtime and tracing: `strace`, `ltrace`, `bpftrace`, Valgrind, `dmesg`.
-- Silicon: `radeontool regmatch`, BAR reads through `resourceN`, live
-  `radeontop` and `radeontop -d` output under a named load.
-
-When an audit reports a code claim, cite how the symbol or path was found, not
-only `file:line`: `(clangd: references on FUNC)`, `(global -r SYMBOL)`,
-`(rg --fixed-strings SYMBOL .)`.
-
-A missing tool proves nothing about the code. Record the package name, the
-install source, and the validation command; when the tool cannot be installed,
-record `not run` and why.
-
-Every new probe, lint, or verdict-producing script earns trust by calibration
-against known-good and known-bad inputs first.
-
-Subagents are read-only evidence collectors unless the user authorizes a
-different role; use at most three concurrently, and give each a bounded task,
-input scope, expected output, and citation requirement. The parent agent owns
-synthesis, conflict resolution, implementation choices, commits, deletions, and
-final claims.
-
-## Synthesis over selection
-
-When merging parallel branches or review findings, preserve all non-refuted
-content. Mechanism and evidence decide; chronology, branch age, and author do
-not. Default additive resolution is union plus synthesis; selection requires
-proof of refutation or supersession by a verified line-level diff and recorded
-rationale.
-
-After every merge resolution and before every commit, read the staged diff
-adversarially:
-
-```sh
-git diff --staged
-```
-
-Verify each removed line was intentional, duplicated elsewhere, or refuted;
-compare test labels with the commands they run; verify every symbol named in
-comments or documentation against source. When anything non-refuted was
-dropped, restore it, refute it by name and citation, or record it as explicit
-follow-up.
-
-When a reviewer finds a defect, fix the class, not only the instance. Add the
-rule, check, or test that would have caught it.
-
 ## Security and hardware stop-line
 
 Privileged register access and BAR mapping are the hazardous surface here.
@@ -599,8 +298,8 @@ through a shell wrapper or generated script; or sensitive data in logs and
 generated artifacts.
 
 Untrusted input passes allow-lists, normalization, and containment checks before
-any shell or path use. Hazardous paths open on exact opt-in values; unset,
-empty, and zero-valued gates stay closed.
+any shell or path use. A hazardous path opens on one exact documented arming token; a
+selector whose zero or `-1` is meaningful takes a separate arming variable.
 
 ## Engineering foundations
 
@@ -617,48 +316,3 @@ is evidence, and it changes the model or it does not, on the record either way.
 
 Final artifacts end more accurate, reproducible, navigable, testable, and
 source-grounded than their inputs.
-
-## Claude Code notes
-
-These notes came from the retired standalone `CLAUDE.md` loader and hold the Claude Code specifics that a tool-generic guide leaves out. A rule that applies to every agent lives in the sections above.
-
-### Loading rule
-
-Each section below names the `AGENTS.md` section it defers to, so a rule has one
-home and this file adds only what is specific to Claude Code. A rule that would
-apply to any agent belongs in `AGENTS.md` instead.
-
-When Claude Code starts inside a parent workspace or a temporary worktree, load
-`radeontop-gororoba/AGENTS.md` before editing radeontop paths. These rules govern
-every edit under this repository regardless of launch directory.
-
-### Claude Code operating notes
-
-Inspect the real repository with Claude Code tools before editing; memory, prior
-summaries, and recalled context are leads, and `AGENTS.md` plus source are
-authority.
-
-Inspect the diff after every edit; the adversarial staged-diff read from
-`AGENTS.md` runs before any commit or completion claim.
-
-Claude Code task tracking is transient working state; durable state lands in
-code, commit messages, findings, documentation, or retained bundles.
-
-Subagent limits, the read-only default, and citation duties live in `AGENTS.md`
-under `Tooling for investigation and audits`.
-
-### Response shape
-
-`AGENTS.md` owns how a response reads, under `Response and report prose`, and
-that section governs every response about this repository: the answer first,
-one new fact per sentence, plain verbs over nominalizations, quantities at the
-precision the argument uses, and scarce emphasis. The mandatory content lives
-there too -- outcome, decision, evidence, validation run, an unrun check as
-`not run` with its reason, and residual uncertainty.
-
-Claude Code renders a response as GitHub-flavored Markdown in a terminal, so
-headings, tables, and bold render live, and the scarcity rule applies to what
-they mark on a screen the reader scrolls once.
-
-Deliberation lives in thinking blocks. Chained reasoning reaches the response
-only where it explains the next action or a validation requirement.
