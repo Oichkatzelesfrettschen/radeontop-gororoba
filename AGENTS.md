@@ -288,6 +288,30 @@ Source comments prefer public register documentation, kernel symbols, DRM
 names, and exact hardware identity. Empirical fork evidence belongs in findings
 or commit messages unless the code needs the mechanism to be intelligible.
 
+## Synthesis over selection
+
+When merging parallel branches or review findings, preserve all non-refuted
+content. Mechanism and evidence decide; chronology, branch age, and author do
+not. Default additive resolution is union plus synthesis; selection requires
+proof of refutation or supersession by a verified line-level diff and recorded
+rationale.
+
+After every merge resolution and before every commit, read the staged diff
+adversarially:
+
+```sh
+git diff --staged
+```
+
+Verify each removed line was intentional, duplicated elsewhere, or refuted;
+compare test labels with the commands they run; verify every symbol named in
+comments or documentation against source. When anything non-refuted was
+dropped, restore it, refute it by name and citation, or record it as explicit
+follow-up.
+
+When a reviewer finds a defect, fix the class, not only the instance. Add the
+rule, check, or test that would have caught it.
+
 ## Security and hardware stop-line
 
 Privileged register access and BAR mapping are the hazardous surface here.
